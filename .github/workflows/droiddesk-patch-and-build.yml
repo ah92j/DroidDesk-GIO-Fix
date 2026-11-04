@@ -1,0 +1,240 @@
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/droiddesk-patch-and-build.yml'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
+      - 'app/pubspec.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Apply GIO, audio and desktop defaults
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def insert_once(text: str, anchor: str, addition: str, label: str) -> str:
+              if addition.strip() in text:
+                  return text
+              if text.count(anchor) != 1:
+                  raise SystemExit(f"Could not locate unique insertion point: {label}")
+              return text.replace(anchor, anchor + addition, 1)
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if new in text:
+                  return text
+              if text.count(old) != 1:
+                  raise SystemExit(f"Could not locate unique replacement point: {label}")
+              return text.replace(old, new, 1)
+
+          runtime_path = Path('app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt')
+          runtime = runtime_path.read_text()
+
+          runtime = insert_once(
+              runtime,
+              '        env["XDG_RUNTIME_DIR"] = tmpDir.absolutePath\n',
+              '        // Keep XFCE applications on DroidDesk-local PulseAudio.\n'
+              '        env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"\n'
+              '        env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath\n',
+              'PulseAudio environment',
+          )
+
+          runtime = insert_once(
+              runtime,
+              '        env["XDG_DATA_DIRS"] = "${prefixDir.absolutePath}/share"\n',
+              '        // Prevent GLib from falling back to the inaccessible original Termux helper path.\n'
+              '        env["GIO_LAUNCH_DESKTOP"] =\n'
+              '            File(prefixDir, "libexec/gio-launch-desktop").absolutePath\n',
+              'GIO helper environment',
+          )
+
+          audio_marker = '            # DROIDDESK_OPENSL_TCP_AUDIO'
+          if audio_marker not in runtime:
+              start_marker = '            # PulseAudio daemonizes, so it outlives a stopped session.'
+              end_marker = '            echo "DIAG: PulseAudio sinks:'
+              start = runtime.find(start_marker)
+              end_start = runtime.find(end_marker, start)
+              if start < 0 or end_start < 0:
+                  raise SystemExit('Could not locate the existing PulseAudio startup block')
+              end = runtime.find('\n', end_start)
+              if end < 0:
+                  raise SystemExit('Could not locate the end of the PulseAudio diagnostic line')
+              end += 1
+
+              audio_block = r'''            # DROIDDESK_OPENSL_TCP_AUDIO
+              # Use the working OpenSL ES backend, expose localhost TCP for browsers,
+              # and keep the private Unix socket for native DroidDesk clients.
+              limit() {
+                  if command -v timeout >/dev/null 2>&1; then timeout "${'$'}@"; else shift; "${'$'}@"; fi
+              }
+              export PULSE_SERVER="tcp:127.0.0.1:4713"
+              export PULSE_RUNTIME_PATH="${tmpDir.absolutePath}/pulse"
+              mkdir -p "${'$'}PULSE_RUNTIME_PATH"
+              pulse_log="${tmpDir.absolutePath}/pulse/pulseaudio.log"
+              : > "${'$'}pulse_log"
+              pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+              sleep 0.2
+
+              start_pulse() {
+                  sink_module="${'$'}1"
+                  rm -f "${'$'}PULSE_RUNTIME_PATH/native"
+                  PULSE_RUNTIME_PATH="${'$'}PULSE_RUNTIME_PATH" pulseaudio \
+                      --daemonize=no --use-pid-file=no --exit-idle-time=-1 \
+                      --dl-search-path="${prefixDir.absolutePath}/lib/pulseaudio/modules" \
+                      -n \
+                      -L "${'$'}sink_module" \
+                      -L "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713" \
+                      -L "module-native-protocol-unix socket=${'$'}PULSE_RUNTIME_PATH/native" \
+                      >> "${'$'}pulse_log" 2>&1 &
+                  pulse_pid="${'$'}!"
+                  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+                      if limit 2 pactl -s tcp:127.0.0.1:4713 info >/dev/null 2>&1; then
+                          return 0
+                      fi
+                      if ! kill -0 "${'$'}pulse_pid" 2>/dev/null; then
+                          break
+                      fi
+                      sleep 0.2
+                  done
+                  kill "${'$'}pulse_pid" >/dev/null 2>&1 || true
+                  return 1
+              }
+
+              audio_ready=0
+              if start_pulse module-sles-sink; then
+                  audio_ready=1
+                  echo "DIAG: OpenSL ES audio ready on 127.0.0.1:4713"
+              else
+                  pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+                  sleep 0.2
+                  if start_pulse module-aaudio-sink; then
+                      audio_ready=1
+                      echo "DIAG: AAudio fallback ready on 127.0.0.1:4713"
+                  fi
+              fi
+
+              if [ "${'$'}audio_ready" != "1" ]; then
+                  echo "DIAG: PulseAudio did not start; inspect ${'$'}pulse_log"
+                  tail -n 30 "${'$'}pulse_log" 2>/dev/null || true
+              fi
+              echo "DIAG: PulseAudio sinks: ${'$'}(limit 2 pactl -s tcp:127.0.0.1:4713 list short sinks 2>/dev/null | cut -f2 | tr '\n' ' ')"
+              '''
+              runtime = runtime[:start] + audio_block + runtime[end:]
+
+          if 'env["GIO_LAUNCH_DESKTOP"]' not in runtime:
+              raise SystemExit('GIO_LAUNCH_DESKTOP was not applied')
+          if 'module-sles-sink' not in runtime or 'port=4713' not in runtime:
+              raise SystemExit('OpenSL ES/TCP audio setup was not applied')
+          runtime_path.write_text(runtime)
+
+          profile_path = Path('app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt')
+          profile = profile_path.read_text()
+          profile = replace_once(
+              profile,
+              '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v14"',
+              '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v15"',
+              'XFCE profile version',
+          )
+          profile = insert_once(
+              profile,
+              '            val xfconfDir = File(\n',
+              '            File(homeDir, "Desktop").mkdirs()\n\n',
+              'Desktop directory creation',
+          )
+          profile = replace_once(
+              profile,
+              '<property name="style" type="int" value="0"/>',
+              '<property name="style" type="int" value="2"/>',
+              'Show desktop icons',
+          )
+          profile_path.write_text(profile)
+
+          # Distinguish the custom APK from the upstream 1.3.1 release.
+          pubspec_path = Path('app/pubspec.yaml')
+          pubspec = pubspec_path.read_text()
+          pubspec = replace_once(
+              pubspec,
+              'version: 1.3.1+6',
+              'version: 1.3.2+7',
+              'APK version',
+          )
+          pubspec_path.write_text(pubspec)
+
+          print('Source patch applied and verified.')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Gradle 8.14
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
+
+      - name: Install Android CMake and generate Gradle wrapper
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "cmake;3.22.1"
+          FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
+          cd app/android
+          gradle wrapper --gradle-version 8.14 --distribution-type all
+
+      - name: Resolve Flutter packages
+        working-directory: app
+        run: flutter pub get
+
+      - name: Build ARM64 release APK
+        working-directory: app
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidDesk-GIO-Fix-1.3.2-arm64
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit patched source files
+        continue-on-error: true
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt
+          git add app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt
+          git add app/pubspec.yaml
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+          else
+            git commit -m "Fix GIO launcher, audio startup and desktop icons"
+            git push
+          fi
