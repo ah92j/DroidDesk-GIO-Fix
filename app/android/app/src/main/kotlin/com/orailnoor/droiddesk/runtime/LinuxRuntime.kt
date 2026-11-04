@@ -1093,11 +1093,17 @@ class LinuxRuntime(private val context: Context) {
 
         env["DISPLAY"] = ":0"
         env["XDG_RUNTIME_DIR"] = tmpDir.absolutePath
+        // Keep XFCE applications on DroidDesk-local PulseAudio.
+        env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
+        env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath
 
         env["PERL5LIB"] = "${prefixDir.absolutePath}/lib/perl5/core_perl:${prefixDir.absolutePath}/lib/perl5/site_perl:${prefixDir.absolutePath}/lib/perl5/vendor_perl:${prefixDir.absolutePath}/lib/perl5"
         env["PYTHONHOME"] = prefixDir.absolutePath
         env["PIP_CONFIG_FILE"] = "${prefixDir.absolutePath}/etc/pip.conf"
         env["XDG_DATA_DIRS"] = "${prefixDir.absolutePath}/share"
+        // Prevent GLib from falling back to the inaccessible original Termux helper path.
+        env["GIO_LAUNCH_DESKTOP"] =
+            File(prefixDir, "libexec/gio-launch-desktop").absolutePath
         // Xfce validates that its compile-time SYSCONFDIR is present literally,
         // even though actual file access is relocated to this app's prefix.
         env["XDG_CONFIG_DIRS"] = listOf(
@@ -2090,37 +2096,64 @@ class LinuxRuntime(private val context: Context) {
             # Use the session bus DroidDesk already started
             export DBUS_SESSION_BUS_ADDRESS="unix:path=${dbusSocket.absolutePath}"
 
-            # PulseAudio daemonizes, so it outlives a stopped session. A wedged
-            # one makes every pactl/pulseaudio call (and XFCE's event sounds)
-            # block forever, leaving a black desktop. Never wait on audio
-            # without a time limit, and always start from a fresh daemon.
-            limit() {
-                if command -v timeout >/dev/null 2>&1; then timeout "${'$'}@"; else shift; "${'$'}@"; fi
-            }
-            pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+            # DROIDDESK_OPENSL_TCP_AUDIO
+    # Use the working OpenSL ES backend, expose localhost TCP for browsers,
+    # and keep the private Unix socket for native DroidDesk clients.
+    limit() {
+        if command -v timeout >/dev/null 2>&1; then timeout "${'$'}@"; else shift; "${'$'}@"; fi
+    }
+    export PULSE_SERVER="tcp:127.0.0.1:4713"
+    export PULSE_RUNTIME_PATH="${tmpDir.absolutePath}/pulse"
+    mkdir -p "${'$'}PULSE_RUNTIME_PATH"
+    pulse_log="${tmpDir.absolutePath}/pulse/pulseaudio.log"
+    : > "${'$'}pulse_log"
+    pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+    sleep 0.2
 
-            # Native Android audio. AAudio is reliable on modern Android while
-            # OpenSL ES remains the compatibility fallback for older devices.
-            if [ "${if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) "1" else "0"}" = "1" ]; then
-                limit 10 pulseaudio --start --exit-idle-time=-1 \
-                    --load=module-aaudio-sink >/dev/null 2>&1 || true
-                audio_ready=0
-                for attempt in 1 2 3 4 5 6 7 8 9 10; do
-                    if limit 2 pactl list short sinks 2>/dev/null | grep -q AAudio_sink; then
-                        audio_ready=1
-                        break
-                    fi
-                    sleep 0.1
-                done
-                if [ "${'$'}audio_ready" != "1" ]; then
-                    pkill -9 -x pulseaudio >/dev/null 2>&1 || true
-                    limit 10 pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
-                fi
-            else
-                limit 10 pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
+    start_pulse() {
+        sink_module="${'$'}1"
+        rm -f "${'$'}PULSE_RUNTIME_PATH/native"
+        PULSE_RUNTIME_PATH="${'$'}PULSE_RUNTIME_PATH" pulseaudio \
+            --daemonize=no --use-pid-file=no --exit-idle-time=-1 \
+            --dl-search-path="${prefixDir.absolutePath}/lib/pulseaudio/modules" \
+            -n \
+            -L "${'$'}sink_module" \
+            -L "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713" \
+            -L "module-native-protocol-unix socket=${'$'}PULSE_RUNTIME_PATH/native" \
+            >> "${'$'}pulse_log" 2>&1 &
+        pulse_pid="${'$'}!"
+        for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            if limit 2 pactl -s tcp:127.0.0.1:4713 info >/dev/null 2>&1; then
+                return 0
             fi
-            echo "DIAG: PulseAudio sinks: ${'$'}(limit 2 pactl list short sinks 2>/dev/null | cut -f2 | tr '\n' ' ')"
+            if ! kill -0 "${'$'}pulse_pid" 2>/dev/null; then
+                break
+            fi
+            sleep 0.2
+        done
+        kill "${'$'}pulse_pid" >/dev/null 2>&1 || true
+        return 1
+    }
 
+    audio_ready=0
+    if start_pulse module-sles-sink; then
+        audio_ready=1
+        echo "DIAG: OpenSL ES audio ready on 127.0.0.1:4713"
+    else
+        pkill -9 -x pulseaudio >/dev/null 2>&1 || true
+        sleep 0.2
+        if start_pulse module-aaudio-sink; then
+            audio_ready=1
+            echo "DIAG: AAudio fallback ready on 127.0.0.1:4713"
+        fi
+    fi
+
+    if [ "${'$'}audio_ready" != "1" ]; then
+        echo "DIAG: PulseAudio did not start; inspect ${'$'}pulse_log"
+        tail -n 30 "${'$'}pulse_log" 2>/dev/null || true
+    fi
+    echo "DIAG: PulseAudio sinks: ${'$'}(limit 2 pactl -s tcp:127.0.0.1:4713 list short sinks 2>/dev/null | cut -f2 | tr '\n' ' ')"
+    
             echo "DIAG: Launching $desktopCommand natively on DISPLAY=:0 ..."
             exec $desktopCommand
         """.trimIndent()

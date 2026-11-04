@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v14"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v15"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -28,6 +28,7 @@ object XfceMobileProfile {
 
         return try {
             wallpaperFile.parentFile?.mkdirs()
+            File(homeDir, "Desktop").mkdirs()
             context.assets.open(WALLPAPER_ASSET).use { input ->
                 wallpaperFile.outputStream().use(input::copyTo)
             }
@@ -342,7 +343,7 @@ object XfceMobileProfile {
             </property>
           </property>
           <property name="desktop-icons" type="empty">
-            <property name="style" type="int" value="0"/>
+            <property name="style" type="int" value="2"/>
             <property name="icon-size" type="uint" value="72"/>
             <property name="file-icons" type="empty">
               <property name="show-home" type="bool" value="false"/>
