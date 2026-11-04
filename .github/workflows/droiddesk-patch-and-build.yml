@@ -189,8 +189,10 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Set up Android SDK
+           - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Gradle 8.14
         uses: gradle/actions/setup-gradle@v4
