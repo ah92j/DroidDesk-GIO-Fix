@@ -149,8 +149,8 @@ jobs:
           )
           profile = insert_once(
               profile,
-              '            val xfconfDir = File(\n',
-              '            File(homeDir, "Desktop").mkdirs()\n\n',
+              '            wallpaperFile.parentFile?.mkdirs()\n',
+              '            File(homeDir, "Desktop").mkdirs()\n',
               'Desktop directory creation',
           )
           profile = replace_once(
@@ -238,6 +238,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No source changes to commit."
           else
-            git commit -m "Fix GIO launcher, audio startup and desktop icons"
+            git commit -m "Fix GIO launcher, audio startup and desktop icons [skip ci]"
             git push
           fi
