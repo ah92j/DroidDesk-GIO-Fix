@@ -1,4 +1,3 @@
-
 on:
   workflow_dispatch:
   push:
@@ -202,7 +201,6 @@ jobs:
       - name: Install Android CMake and generate Gradle wrapper
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
           sdkmanager "cmake;3.22.1"
           FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
@@ -215,13 +213,16 @@ jobs:
 
       - name: Build ARM64 release APK
         working-directory: app
-        run: flutter build apk --release --target-platform android-arm64
+        shell: bash
+        run: |
+          flutter build apk --release --target-platform android-arm64
+          test -s build/app/outputs/flutter-apk/app-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: DroidDesk-GIO-Fix-1.3.2-arm64
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
 
