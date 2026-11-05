@@ -1,3 +1,5 @@
+name: DroidDesk Permanent Release Build
+
 on:
   workflow_dispatch:
   push:
@@ -5,12 +7,13 @@ on:
       - main
     paths:
       - '.github/workflows/droiddesk-patch-and-build.yml'
+      - 'app/android/app/build.gradle.kts'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
       - 'app/pubspec.yaml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   patch-and-build:
@@ -19,269 +22,52 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Apply GIO, audio and desktop defaults
+      - name: Validate committed DroidDesk runtime fixes
         shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          def insert_once(text: str, anchor: str, addition: str, label: str) -> str:
-              if addition.strip() in text:
-                  return text
-              if text.count(anchor) != 1:
-                  raise SystemExit(f"Could not locate unique insertion point: {label}")
-              return text.replace(anchor, anchor + addition, 1)
+          runtime = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+          ).read_text()
+          profile = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
+          ).read_text()
+          pubspec = Path('app/pubspec.yaml').read_text()
 
-          def insert_before_once(text: str, anchor: str, addition: str, label: str) -> str:
-              marker = addition.strip().splitlines()[0].strip()
-              if marker in text:
-                  return text
-              if text.count(anchor) != 1:
-                  raise SystemExit(f"Could not locate unique insertion point: {label}")
-              return text.replace(anchor, addition + anchor, 1)
+          required_runtime = [
+              'env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"',
+              'env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath',
+              'env["GIO_LAUNCH_DESKTOP"]',
+              'private fun isPulseAudioReady(): Boolean',
+              'private fun startPulseAudio(): Boolean',
+              'private fun stopPulseAudio()',
+              'module-sles-sink',
+              'port=4713',
+              '# Audio is started and supervised by LinuxRuntime in the Android process.',
+              'if (!startPulseAudio())',
+          ]
 
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
-              if new in text:
-                  return text
-              if text.count(old) != 1:
-                  raise SystemExit(f"Could not locate unique replacement point: {label}")
-              return text.replace(old, new, 1)
+          required_profile = [
+              '.droiddesk-xfce-mobile-v16',
+              'File(homeDir, "Desktop").mkdirs()',
+              '<property name="style" type="int" value="2"/>',
+          ]
 
-          runtime_path = Path('app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt')
-          runtime = runtime_path.read_text()
+          missing = [item for item in required_runtime if item not in runtime]
+          missing.extend(item for item in required_profile if item not in profile)
 
-          runtime = insert_once(
-              runtime,
-              '        env["XDG_RUNTIME_DIR"] = tmpDir.absolutePath\n',
-              '        // Keep XFCE applications on DroidDesk-local PulseAudio.\n'
-              '        env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"\n'
-              '        env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath\n',
-              'PulseAudio environment',
-          )
+          if 'version: 1.3.3+8' not in pubspec:
+              missing.append('version: 1.3.3+8')
 
-          runtime = insert_once(
-              runtime,
-              '        env["XDG_DATA_DIRS"] = "${prefixDir.absolutePath}/share"\n',
-              '        // Prevent GLib from falling back to the inaccessible original Termux helper path.\n'
-              '        env["GIO_LAUNCH_DESKTOP"] =\n'
-              '            File(prefixDir, "libexec/gio-launch-desktop").absolutePath\n',
-              'GIO helper environment',
-          )
-
-          # Start PulseAudio as a Process owned by LinuxRuntime, not as a
-          # background shell child of xfce4-session. This keeps audio alive
-          # independently of XFCE shell job control and ties shutdown to Stop.
-          runtime = insert_once(
-              runtime,
-              'import java.util.zip.ZipInputStream\n',
-              'import java.util.concurrent.TimeUnit\n',
-              'PulseAudio wait timeout import',
-          )
-          runtime = insert_once(
-              runtime,
-              '        @Volatile private var dbusProcess: Process? = null\n',
-              '        @Volatile private var pulseProcess: Process? = null\n',
-              'PulseAudio process ownership',
-          )
-
-          pulse_helpers = r'''    private fun isPulseAudioReady(): Boolean {
-              val pactl = File(binDir, "pactl")
-              if (!pactl.canExecute()) return false
-              return runCatching {
-                  val probe = ProcessBuilder(
-                      pactl.absolutePath,
-                      "-s", "tcp:127.0.0.1:4713", "info",
-                  ).directory(homeDir)
-                      .redirectErrorStream(true)
-                      .also { builder ->
-                          builder.environment().clear()
-                          builder.environment().putAll(getTermuxEnv())
-                          builder.environment()["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
-                          builder.environment()["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath
-                      }
-                      .start()
-                  if (!probe.waitFor(1200, TimeUnit.MILLISECONDS)) {
-                      probe.destroyForcibly()
-                      probe.waitFor()
-                      false
-                  } else {
-                      probe.exitValue() == 0
-                  }
-              }.getOrDefault(false)
-          }
-
-          private fun startPulseAudio(): Boolean {
-              val pulseDir = File(tmpDir, "pulse").apply { mkdirs() }
-              val pulseLog = File(pulseDir, "pulseaudio.log")
-              val existing = pulseProcess
-              if (existing?.isAlive == true) {
-                  val existingDeadline = System.currentTimeMillis() + 5_000
-                  while (System.currentTimeMillis() < existingDeadline) {
-                      if (isPulseAudioReady()) return true
-                      Thread.sleep(250)
-                  }
-                  Log.w(TAG, "Existing PulseAudio process is alive but the TCP server is not ready")
-                  return false
-              }
-              pulseProcess = null
-              if (isPulseAudioReady()) {
-                  Log.i(TAG, "Reusing an existing PulseAudio TCP server")
-                  return true
-              }
-
-              val pulseBinary = File(binDir, "pulseaudio")
-              if (!pulseBinary.canExecute()) {
-                  Log.e(TAG, "PulseAudio executable is missing: ${pulseBinary.absolutePath}")
-                  return false
-              }
-              File(pulseDir, "native").delete()
-              val command = listOf(
-                  pulseBinary.absolutePath,
-                  "--daemonize=no",
-                  "--use-pid-file=no",
-                  "--exit-idle-time=-1",
-                  "--dl-search-path=${File(prefixDir, "lib/pulseaudio/modules").absolutePath}",
-                  "-n",
-                  "-L", "module-sles-sink",
-                  "-L", "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713",
-                  "-L", "module-native-protocol-unix socket=${File(pulseDir, "native").absolutePath}",
+          if missing:
+              raise SystemExit(
+                  'Missing expected committed source changes: ' + '; '.join(missing)
               )
 
-              val started = try {
-                  ProcessBuilder(command)
-                      .directory(homeDir.apply { mkdirs() })
-                      .redirectErrorStream(true)
-                      .redirectOutput(ProcessBuilder.Redirect.appendTo(pulseLog))
-                      .also { builder ->
-                          builder.environment().clear()
-                          builder.environment().putAll(getTermuxEnv())
-                          builder.environment()["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
-                          builder.environment()["PULSE_RUNTIME_PATH"] = pulseDir.absolutePath
-                      }
-                      .start()
-              } catch (error: Exception) {
-                  Log.e(TAG, "Failed to launch PulseAudio", error)
-                  return false
-              }
-              pulseProcess = started
-              Log.i(TAG, "PulseAudio started as an app-managed process, pid=${processPid(started) ?: -1}")
-
-              val deadline = System.currentTimeMillis() + 10_000
-              while (System.currentTimeMillis() < deadline) {
-                  if (!started.isAlive) {
-                      val exitCode = runCatching { started.exitValue() }.getOrDefault(-1)
-                      val tail = runCatching { pulseLog.readLines().takeLast(40).joinToString("\\n") }.getOrDefault("")
-                      Log.e(TAG, "PulseAudio exited during startup (code=$exitCode): $tail")
-                      pulseProcess = null
-                      return false
-                  }
-                  if (isPulseAudioReady()) {
-                      Log.i(TAG, "PulseAudio TCP server ready on 127.0.0.1:4713")
-                      return true
-                  }
-                  Thread.sleep(250)
-              }
-
-              Log.w(TAG, "PulseAudio is alive but did not pass the TCP readiness probe; leaving it running. Log: ${pulseLog.absolutePath}")
-              return started.isAlive
-          }
-
-          private fun stopPulseAudio() {
-              val process = pulseProcess
-              pulseProcess = null
-              if (process?.isAlive == true) {
-                  Log.i(TAG, "Stopping app-managed PulseAudio process")
-                  process.destroy()
-                  if (!process.waitFor(1500, TimeUnit.MILLISECONDS)) process.destroyForcibly()
-              }
-          }
-
-          '''
-          runtime = insert_before_once(
-              runtime,
-              '    fun stopSession() {\n',
-              pulse_helpers,
-              'PulseAudio lifecycle helpers',
-          )
-          runtime = insert_once(
-              runtime,
-              '            Log.i(TAG, "Session dbus-daemon ready")\n',
-              '            if (!startPulseAudio()) {\n'
-              '                Log.w(TAG, "PulseAudio did not become ready; inspect ${tmpDir.absolutePath}/pulse/pulseaudio.log")\n'
-              '            }\n',
-              'Start app-managed PulseAudio after D-Bus',
-          )
-          runtime = insert_once(
-              runtime,
-              '        dbusProcess = null\n        Log.i(TAG, "Session stopped")\n',
-              '        dbusProcess = null\n        stopPulseAudio()\n        Log.i(TAG, "Session stopped")\n',
-              'Stop app-managed PulseAudio with Linux session',
-          )
-
-          audio_marker = '            # DROIDDESK_OPENSL_TCP_AUDIO'
-          old_audio_marker = '            # PulseAudio daemonizes, so it outlives a stopped session.'
-          audio_end_marker = '            echo "DIAG: Launching $desktopCommand natively on DISPLAY=:0 ..."'
-          start = runtime.find(audio_marker)
-          if start < 0:
-              start = runtime.find(old_audio_marker)
-          end = runtime.find(audio_end_marker, start)
-          if start < 0 or end < 0:
-              raise SystemExit('Could not locate the PulseAudio shell block boundaries')
-
-          audio_block = r'''            # Audio is started and supervised by LinuxRuntime in the Android process.
-              export PULSE_SERVER="tcp:127.0.0.1:4713"
-              export PULSE_RUNTIME_PATH="${tmpDir.absolutePath}/pulse"
-              echo "DIAG: Using app-managed OpenSL ES PulseAudio on 127.0.0.1:4713"
-              '''
-          runtime = runtime[:start] + audio_block + runtime[end:]
-          if 'env["GIO_LAUNCH_DESKTOP"]' not in runtime:
-              raise SystemExit('GIO_LAUNCH_DESKTOP was not applied')
-          if 'module-sles-sink' not in runtime or 'port=4713' not in runtime:
-              raise SystemExit('OpenSL ES/TCP audio setup was not applied')
-          runtime_path.write_text(runtime)
-
-          profile_path = Path('app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt')
-          profile = profile_path.read_text()
-          if '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v16"' not in profile:
-              if '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v15"' in profile:
-                  profile = profile.replace(
-                      '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v15"',
-                      '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v16"', 1,
-                  )
-              elif '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v14"' in profile:
-                  profile = profile.replace(
-                      '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v14"',
-                      '    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v16"', 1,
-                  )
-              else:
-                  raise SystemExit('Could not locate the XFCE profile marker')
-          profile = insert_once(
-              profile,
-              '            wallpaperFile.parentFile?.mkdirs()\n',
-              '            File(homeDir, "Desktop").mkdirs()\n',
-              'Desktop directory creation',
-          )
-          profile = replace_once(
-              profile,
-              '<property name="style" type="int" value="0"/>',
-              '<property name="style" type="int" value="2"/>',
-              'Show desktop icons',
-          )
-          profile_path.write_text(profile)
-
-          # Distinguish the custom APK release 1.3.3.
-          pubspec_path = Path('app/pubspec.yaml')
-          pubspec = pubspec_path.read_text()
-          if 'version: 1.3.3+8' not in pubspec:
-              if 'version: 1.3.2+7' in pubspec:
-                  pubspec = pubspec.replace('version: 1.3.2+7', 'version: 1.3.3+8', 1)
-              elif 'version: 1.3.1+6' in pubspec:
-                  pubspec = pubspec.replace('version: 1.3.1+6', 'version: 1.3.3+8', 1)
-              else:
-                  raise SystemExit('Could not locate the current APK version in pubspec.yaml')
-          pubspec_path.write_text(pubspec)
-
-          print('Source patch applied and verified.')
+          print('Runtime audio, GIO, XFCE desktop and version checks passed.')
           PY
 
       - name: Set up Java 17
@@ -307,15 +93,18 @@ jobs:
         with:
           gradle-version: '8.14'
 
-      - name: Install Android CMake, Build Tools and generate Gradle wrapper
+      - name: Install Android CMake and Build Tools
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "cmake;3.22.1" "build-tools;35.0.0"
           FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
-          cd app/android
-          gradle wrapper --gradle-version 8.14 --distribution-type all
+
+      - name: Generate Gradle wrapper
+        working-directory: app/android
+        run: gradle wrapper --gradle-version 8.14 --distribution-type all
 
       - name: Resolve Flutter packages
         working-directory: app
@@ -337,7 +126,9 @@ jobs:
           : "${DROIDDESK_KEY_PASSWORD:?Missing DROIDDESK_KEY_PASSWORD secret}"
 
           KEYSTORE_PATH="$RUNNER_TEMP/droiddesk-release.jks"
+
           printf '%s' "$DROIDDESK_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+
           chmod 600 "$KEYSTORE_PATH"
           test -s "$KEYSTORE_PATH"
 
@@ -359,6 +150,7 @@ jobs:
         working-directory: app
         shell: bash
         run: |
+          set -euo pipefail
           flutter build apk --release --target-platform android-arm64
           test -s build/app/outputs/flutter-apk/app-release.apk
 
@@ -368,18 +160,30 @@ jobs:
           set -euo pipefail
 
           APK="app/build/app/outputs/flutter-apk/app-release.apk"
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -n "$APKSIGNER"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK_ROOT" ]; then
+            echo "Android SDK path is not configured."
+            exit 1
+          fi
+
+          APKSIGNER="$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+
+          if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+            echo "apksigner was not found in Android build-tools."
+            exit 1
+          fi
 
           "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
 
           ACTUAL_SHA256="$(sed -n 's/.*Signer #1 certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+
           EXPECTED_SHA256="e8ba3273fa8e3ca05db4f13b2c58b9c539808c84c71721a293c6dbad4fe80656"
 
-          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+          if [ -z "$ACTUAL_SHA256" ] || [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
             echo "ERROR: APK signing certificate mismatch."
             echo "Expected: $EXPECTED_SHA256"
-            echo "Actual:   $ACTUAL_SHA256"
+            echo "Actual:   ${ACTUAL_SHA256:-not found}"
             exit 1
           fi
 
@@ -392,19 +196,3 @@ jobs:
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Commit patched source files
-        continue-on-error: true
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt
-          git add app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt
-          git add app/pubspec.yaml
-          if git diff --cached --quiet; then
-            echo "No source changes to commit."
-          else
-            git commit -m "Fix GIO launcher, persistent audio and desktop icons [skip ci]"
-            git push
-          fi
