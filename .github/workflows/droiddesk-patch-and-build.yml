@@ -307,10 +307,11 @@ jobs:
         with:
           gradle-version: '8.14'
 
-      - name: Install Android CMake and generate Gradle wrapper
+      - name: Install Android CMake, Build Tools and generate Gradle wrapper
         shell: bash
         run: |
-          sdkmanager "cmake;3.22.1"
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "cmake;3.22.1" "build-tools;35.0.0"
           FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
           cd app/android
@@ -320,11 +321,39 @@ jobs:
         working-directory: app
         run: flutter pub get
 
-      - name: Reuse the same debug signing key for future app updates
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: droiddesk-debug-signing-key-v1
+      - name: Configure permanent release signing
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_BASE64: ${{ secrets.DROIDDESK_KEYSTORE_BASE64 }}
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          : "${DROIDDESK_KEYSTORE_BASE64:?Missing DROIDDESK_KEYSTORE_BASE64 secret}"
+          : "${DROIDDESK_KEYSTORE_PASSWORD:?Missing DROIDDESK_KEYSTORE_PASSWORD secret}"
+          : "${DROIDDESK_KEY_ALIAS:?Missing DROIDDESK_KEY_ALIAS secret}"
+          : "${DROIDDESK_KEY_PASSWORD:?Missing DROIDDESK_KEY_PASSWORD secret}"
+
+          KEYSTORE_PATH="$RUNNER_TEMP/droiddesk-release.jks"
+          printf '%s' "$DROIDDESK_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$DROIDDESK_KEYSTORE_PASSWORD" \
+            -alias "$DROIDDESK_KEY_ALIAS" >/dev/null
+
+          {
+            echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH"
+            echo "DROIDDESK_KEYSTORE_PASSWORD=$DROIDDESK_KEYSTORE_PASSWORD"
+            echo "DROIDDESK_KEY_ALIAS=$DROIDDESK_KEY_ALIAS"
+            echo "DROIDDESK_KEY_PASSWORD=$DROIDDESK_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+          echo "Permanent release keystore loaded and alias validated."
 
       - name: Build ARM64 release APK
         working-directory: app
@@ -333,10 +362,33 @@ jobs:
           flutter build apk --release --target-platform android-arm64
           test -s build/app/outputs/flutter-apk/app-release.apk
 
+      - name: Verify permanent APK signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="app/build/app/outputs/flutter-apk/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+
+          ACTUAL_SHA256="$(sed -n 's/.*Signer #1 certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          EXPECTED_SHA256="e8ba3273fa8e3ca05db4f13b2c58b9c539808c84c71721a293c6dbad4fe80656"
+
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: APK signing certificate mismatch."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   $ACTUAL_SHA256"
+            exit 1
+          fi
+
+          echo "APK certificate matches the permanent DroidDesk release key."
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-GIO-Fix-1.3.3-arm64
+          name: DroidDesk-GIO-Fix-1.3.3-arm64-permanent-key
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
