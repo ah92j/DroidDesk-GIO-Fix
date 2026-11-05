@@ -32,6 +32,14 @@ jobs:
                   raise SystemExit(f"Could not locate unique insertion point: {label}")
               return text.replace(anchor, anchor + addition, 1)
 
+          def insert_before_once(text: str, anchor: str, addition: str, label: str) -> str:
+              marker = addition.strip().splitlines()[0].strip()
+              if marker in text:
+                  return text
+              if text.count(anchor) != 1:
+                  raise SystemExit(f"Could not locate unique insertion point: {label}")
+              return text.replace(anchor, addition + anchor, 1)
+
           def replace_once(text: str, old: str, new: str, label: str) -> str:
               if new in text:
                   return text
@@ -60,9 +68,9 @@ jobs:
               'GIO helper environment',
           )
 
-          # Add the audio process to LinuxRuntime itself instead of starting it
-          # as a background child of the XFCE shell. This keeps it owned by the
-          # app's foreground runtime and lets stopSession() shut it down cleanly.
+          # Start PulseAudio as a Process owned by LinuxRuntime, not as a
+          # background shell child of xfce4-session. This keeps audio alive
+          # independently of XFCE shell job control and ties shutdown to Stop.
           runtime = insert_once(
               runtime,
               'import java.util.zip.ZipInputStream\n',
@@ -77,119 +85,119 @@ jobs:
           )
 
           pulse_helpers = r'''    private fun isPulseAudioReady(): Boolean {
-          val pactl = File(binDir, "pactl")
-          if (!pactl.canExecute()) return false
-          return runCatching {
-              val probe = ProcessBuilder(
-                  pactl.absolutePath,
-                  "-s", "tcp:127.0.0.1:4713", "info",
-              ).directory(homeDir)
-                  .redirectErrorStream(true)
-                  .also { builder ->
-                      builder.environment().clear()
-                      builder.environment().putAll(getTermuxEnv())
-                      builder.environment()["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
-                      builder.environment()["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath
+              val pactl = File(binDir, "pactl")
+              if (!pactl.canExecute()) return false
+              return runCatching {
+                  val probe = ProcessBuilder(
+                      pactl.absolutePath,
+                      "-s", "tcp:127.0.0.1:4713", "info",
+                  ).directory(homeDir)
+                      .redirectErrorStream(true)
+                      .also { builder ->
+                          builder.environment().clear()
+                          builder.environment().putAll(getTermuxEnv())
+                          builder.environment()["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
+                          builder.environment()["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath
+                      }
+                      .start()
+                  if (!probe.waitFor(1200, TimeUnit.MILLISECONDS)) {
+                      probe.destroyForcibly()
+                      probe.waitFor()
+                      false
+                  } else {
+                      probe.exitValue() == 0
                   }
-                  .start()
-              if (!probe.waitFor(1200, TimeUnit.MILLISECONDS)) {
-                  probe.destroyForcibly()
-                  probe.waitFor()
-                  false
-              } else {
-                  probe.exitValue() == 0
-              }
-          }.getOrDefault(false)
+              }.getOrDefault(false)
           }
 
           private fun startPulseAudio(): Boolean {
-          val pulseDir = File(tmpDir, "pulse").apply { mkdirs() }
-          val pulseLog = File(pulseDir, "pulseaudio.log")
-          val existing = pulseProcess
-          if (existing?.isAlive == true) {
-              val existingDeadline = System.currentTimeMillis() + 5_000
-              while (System.currentTimeMillis() < existingDeadline) {
-                  if (isPulseAudioReady()) return true
-                  Thread.sleep(250)
-              }
-              Log.w(TAG, "Existing PulseAudio process is alive but the TCP server is not ready")
-              return false
-          }
-          pulseProcess = null
-          if (isPulseAudioReady()) {
-              Log.i(TAG, "Reusing an existing PulseAudio TCP server")
-              return true
-          }
-
-          val pulseBinary = File(binDir, "pulseaudio")
-          if (!pulseBinary.canExecute()) {
-              Log.e(TAG, "PulseAudio executable is missing: ${pulseBinary.absolutePath}")
-              return false
-          }
-          File(pulseDir, "native").delete()
-          val command = listOf(
-              pulseBinary.absolutePath,
-              "--daemonize=no",
-              "--use-pid-file=no",
-              "--exit-idle-time=-1",
-              "--dl-search-path=${File(prefixDir, "lib/pulseaudio/modules").absolutePath}",
-              "-n",
-              "-L", "module-sles-sink",
-              "-L", "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713",
-              "-L", "module-native-protocol-unix socket=${File(pulseDir, "native").absolutePath}",
-          )
-
-          val started = try {
-              ProcessBuilder(command)
-                  .directory(homeDir.apply { mkdirs() })
-                  .redirectErrorStream(true)
-                  .redirectOutput(ProcessBuilder.Redirect.appendTo(pulseLog))
-                  .also { builder ->
-                      builder.environment().clear()
-                      builder.environment().putAll(getTermuxEnv())
-                      builder.environment()["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
-                      builder.environment()["PULSE_RUNTIME_PATH"] = pulseDir.absolutePath
+              val pulseDir = File(tmpDir, "pulse").apply { mkdirs() }
+              val pulseLog = File(pulseDir, "pulseaudio.log")
+              val existing = pulseProcess
+              if (existing?.isAlive == true) {
+                  val existingDeadline = System.currentTimeMillis() + 5_000
+                  while (System.currentTimeMillis() < existingDeadline) {
+                      if (isPulseAudioReady()) return true
+                      Thread.sleep(250)
                   }
-                  .start()
-          } catch (error: Exception) {
-              Log.e(TAG, "Failed to launch PulseAudio", error)
-              return false
-          }
-          pulseProcess = started
-          Log.i(TAG, "PulseAudio started as an app-managed process, pid=${processPid(started) ?: -1}")
-
-          val deadline = System.currentTimeMillis() + 10_000
-          while (System.currentTimeMillis() < deadline) {
-              if (!started.isAlive) {
-                  val exitCode = runCatching { started.exitValue() }.getOrDefault(-1)
-                  val tail = runCatching { pulseLog.readLines().takeLast(40).joinToString("\\n") }.getOrDefault("")
-                  Log.e(TAG, "PulseAudio exited during startup (code=$exitCode): $tail")
-                  pulseProcess = null
+                  Log.w(TAG, "Existing PulseAudio process is alive but the TCP server is not ready")
                   return false
               }
+              pulseProcess = null
               if (isPulseAudioReady()) {
-                  Log.i(TAG, "PulseAudio TCP server ready on 127.0.0.1:4713")
+                  Log.i(TAG, "Reusing an existing PulseAudio TCP server")
                   return true
               }
-              Thread.sleep(250)
-          }
 
-          Log.w(TAG, "PulseAudio is alive but did not pass the TCP readiness probe; leaving it running. Log: ${pulseLog.absolutePath}")
-          return started.isAlive
+              val pulseBinary = File(binDir, "pulseaudio")
+              if (!pulseBinary.canExecute()) {
+                  Log.e(TAG, "PulseAudio executable is missing: ${pulseBinary.absolutePath}")
+                  return false
+              }
+              File(pulseDir, "native").delete()
+              val command = listOf(
+                  pulseBinary.absolutePath,
+                  "--daemonize=no",
+                  "--use-pid-file=no",
+                  "--exit-idle-time=-1",
+                  "--dl-search-path=${File(prefixDir, "lib/pulseaudio/modules").absolutePath}",
+                  "-n",
+                  "-L", "module-sles-sink",
+                  "-L", "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713",
+                  "-L", "module-native-protocol-unix socket=${File(pulseDir, "native").absolutePath}",
+              )
+
+              val started = try {
+                  ProcessBuilder(command)
+                      .directory(homeDir.apply { mkdirs() })
+                      .redirectErrorStream(true)
+                      .redirectOutput(ProcessBuilder.Redirect.appendTo(pulseLog))
+                      .also { builder ->
+                          builder.environment().clear()
+                          builder.environment().putAll(getTermuxEnv())
+                          builder.environment()["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
+                          builder.environment()["PULSE_RUNTIME_PATH"] = pulseDir.absolutePath
+                      }
+                      .start()
+              } catch (error: Exception) {
+                  Log.e(TAG, "Failed to launch PulseAudio", error)
+                  return false
+              }
+              pulseProcess = started
+              Log.i(TAG, "PulseAudio started as an app-managed process, pid=${processPid(started) ?: -1}")
+
+              val deadline = System.currentTimeMillis() + 10_000
+              while (System.currentTimeMillis() < deadline) {
+                  if (!started.isAlive) {
+                      val exitCode = runCatching { started.exitValue() }.getOrDefault(-1)
+                      val tail = runCatching { pulseLog.readLines().takeLast(40).joinToString("\\n") }.getOrDefault("")
+                      Log.e(TAG, "PulseAudio exited during startup (code=$exitCode): $tail")
+                      pulseProcess = null
+                      return false
+                  }
+                  if (isPulseAudioReady()) {
+                      Log.i(TAG, "PulseAudio TCP server ready on 127.0.0.1:4713")
+                      return true
+                  }
+                  Thread.sleep(250)
+              }
+
+              Log.w(TAG, "PulseAudio is alive but did not pass the TCP readiness probe; leaving it running. Log: ${pulseLog.absolutePath}")
+              return started.isAlive
           }
 
           private fun stopPulseAudio() {
-          val process = pulseProcess
-          pulseProcess = null
-          if (process?.isAlive == true) {
-              Log.i(TAG, "Stopping app-managed PulseAudio process")
-              process.destroy()
-              if (!process.waitFor(1500, TimeUnit.MILLISECONDS)) process.destroyForcibly()
-          }
+              val process = pulseProcess
+              pulseProcess = null
+              if (process?.isAlive == true) {
+                  Log.i(TAG, "Stopping app-managed PulseAudio process")
+                  process.destroy()
+                  if (!process.waitFor(1500, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+              }
           }
 
           '''
-          runtime = insert_once(
+          runtime = insert_before_once(
               runtime,
               '    fun stopSession() {\n',
               pulse_helpers,
