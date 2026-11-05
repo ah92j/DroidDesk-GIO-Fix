@@ -102,14 +102,6 @@ jobs:
           FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
 
-      - name: Generate Gradle wrapper
-        working-directory: app/android
-        run: gradle wrapper --gradle-version 8.14 --distribution-type all
-
-      - name: Resolve Flutter packages
-        working-directory: app
-        run: flutter pub get
-
       - name: Configure permanent release signing
         shell: bash
         env:
@@ -145,6 +137,14 @@ jobs:
           } >> "$GITHUB_ENV"
 
           echo "Permanent release keystore loaded and alias validated."
+
+      - name: Generate Gradle wrapper
+        working-directory: app/android
+        run: gradle wrapper --gradle-version 8.14 --distribution-type all
+
+      - name: Resolve Flutter packages
+        working-directory: app
+        run: flutter pub get
 
       - name: Build ARM64 release APK
         working-directory: app
