@@ -176,7 +176,7 @@ jobs:
 
           "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
 
-          ACTUAL_SHA256="$(sed -n 's/.*Signer #1 certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+          ACTUAL_SHA256="$(sed -n 's/.*certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
 
           EXPECTED_SHA256="e8ba3273fa8e3ca05db4f13b2c58b9c539808c84c71721a293c6dbad4fe80656"
 
