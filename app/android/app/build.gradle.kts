@@ -7,15 +7,37 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Release signing: app/android/key.properties (local) or DROIDDESK_* env vars (CI).
-// Every published release must use this same key, otherwise in-app updates are rejected.
+// Permanent release signing configuration.
 val releaseKeystore = Properties().apply {
-    rootProject.file("key.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+    rootProject.file("key.properties")
+        .takeIf { it.isFile }
+        ?.inputStream()
+        ?.use(::load)
 }
-// Trimmed: a stray space after a hand-edited value would otherwise break the path or password.
+
 fun releaseSetting(property: String, env: String): String? =
-    (releaseKeystore.getProperty(property) ?: System.getenv(env))?.trim()?.takeIf { it.isNotEmpty() }
+    (releaseKeystore.getProperty(property) ?: System.getenv(env))
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+// All four signing values are mandatory.
 val releaseStoreFile = releaseSetting("storeFile", "DROIDDESK_KEYSTORE")
+    ?: throw GradleException("Missing permanent release keystore path.")
+
+val releaseStorePassword = releaseSetting("storePassword", "DROIDDESK_KEYSTORE_PASSWORD")
+    ?: throw GradleException("Missing permanent keystore password.")
+
+val releaseKeyAlias = releaseSetting("keyAlias", "DROIDDESK_KEY_ALIAS")
+    ?: throw GradleException("Missing permanent release key alias.")
+
+val releaseKeyPassword = releaseSetting("keyPassword", "DROIDDESK_KEY_PASSWORD")
+    ?: throw GradleException("Missing permanent release key password.")
+
+val releaseStore = file(releaseStoreFile)
+
+if (!releaseStore.isFile) {
+    throw GradleException("Permanent release keystore does not exist.")
+}
 
 android {
     namespace = "com.orailnoor.droiddesk"
@@ -37,37 +59,31 @@ android {
 
     defaultConfig {
         applicationId = "com.orailnoor.droiddesk"
-        minSdk = 28  // Downgraded to 28 to bypass W^X (Write XOR Execute) restrictions on app data
-        targetSdk = 28 // API 28 completely disables the Android 10+ execve() block
+        minSdk = 28
+        targetSdk = 28
+
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
         ndk {
-            // ARM64 only — all modern Android phones
             abiFilters += listOf("arm64-v8a")
         }
     }
 
+    // Always use the permanent release keystore.
     signingConfigs {
-        if (releaseStoreFile != null) {
-            create("release") {
-                storeFile = file(releaseStoreFile)
-                storePassword = releaseSetting("storePassword", "DROIDDESK_KEYSTORE_PASSWORD")
-                keyAlias = releaseSetting("keyAlias", "DROIDDESK_KEY_ALIAS")
-                keyPassword = releaseSetting("keyPassword", "DROIDDESK_KEY_PASSWORD")
-            }
+        create("release") {
+            storeFile = releaseStore
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
         }
     }
 
     buildTypes {
         release {
-            // Without a release key (contributor builds) fall back to the debug key so the
-            // APK still installs; such builds cannot update a published release in place.
-            signingConfig = if (releaseStoreFile != null) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("release")
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -75,7 +91,7 @@ android {
         }
     }
 
-    // Enable native (C/C++) build support for wlroots integration
+    // Enable native C/C++ build support.
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
