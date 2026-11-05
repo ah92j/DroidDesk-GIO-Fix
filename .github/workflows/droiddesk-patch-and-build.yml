@@ -1,3 +1,75 @@
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/droiddesk-patch-and-build.yml'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
+      - 'app/pubspec.yaml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Apply GIO, audio and desktop defaults
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def insert_once(text: str, anchor: str, addition: str, label: str) -> str:
+              if addition.strip() in text:
+                  return text
+              if text.count(anchor) != 1:
+                  raise SystemExit(f"Could not locate unique insertion point: {label}")
+              return text.replace(anchor, anchor + addition, 1)
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              if new in text:
+                  return text
+              if text.count(old) != 1:
+                  raise SystemExit(f"Could not locate unique replacement point: {label}")
+              return text.replace(old, new, 1)
+
+          runtime_path = Path('app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt')
+          runtime = runtime_path.read_text()
+
+          runtime = insert_once(
+              runtime,
+              '        env["XDG_RUNTIME_DIR"] = tmpDir.absolutePath\n',
+              '        // Keep XFCE applications on DroidDesk-local PulseAudio.\n'
+              '        env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"\n'
+              '        env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath\n',
+              'PulseAudio environment',
+          )
+
+          runtime = insert_once(
+              runtime,
+              '        env["XDG_DATA_DIRS"] = "${prefixDir.absolutePath}/share"\n',
+              '        // Prevent GLib from falling back to the inaccessible original Termux helper path.\n'
+              '        env["GIO_LAUNCH_DESKTOP"] =\n'
+              '            File(prefixDir, "libexec/gio-launch-desktop").absolutePath\n',
+              'GIO helper environment',
+          )
+
+          # Add the audio process to LinuxRuntime itself instead of starting it
+          # as a background child of the XFCE shell. This keeps it owned by the
+          # app's foreground runtime and lets stopSession() shut it down cleanly.
+          runtime = insert_once(
+              runtime,
+              'import java.util.zip.ZipInputStream\n',
+              'import java.util.concurrent.TimeUnit\n',
+              'PulseAudio wait timeout import',
+          )
+          runtime = insert_once(
               runtime,
               '        @Volatile private var dbusProcess: Process? = null\n',
               '        @Volatile private var pulseProcess: Process? = null\n',
