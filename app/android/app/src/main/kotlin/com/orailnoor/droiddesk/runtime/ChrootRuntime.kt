@@ -81,12 +81,14 @@ class ChrootRuntime(private val context: Context) {
     // ── Rootfs setup ──
 
     /**
-     * Download the Ubuntu rootfs with progress callbacks.
+     * Download the selected ARM64 rootfs.
      */
-    fun downloadRootfs(onProgress: (Double, String) -> Unit) {
-        rootfsManager.downloadRootfs("ubuntu", onProgress)
+    fun downloadRootfs(
+        distro: String = "ubuntu",
+        onProgress: (Double, String) -> Unit,
+    ) {
+        rootfsManager.downloadRootfs(distro, onProgress)
     }
-
     /**
      * Extract the downloaded rootfs and configure it for chroot.
      */
