@@ -285,13 +285,14 @@ class MainActivity : FlutterActivity() {
                 // ── Runtime Status ──
                 "getRuntimeStatus" -> {
                     val rooted = chrootRuntime.hasRoot()
+                    val installedDistro = chrootRuntime.getInstalledDistro().ifBlank { "ubuntu" }
                     result.success(mapOf(
                         "isBootstrapped" to if (rooted) chrootRuntime.isRootfsReady() else linuxRuntime.isBootstrapped(),
                         "isRunning" to if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning(),
                         "hasRoot" to rooted,
-                        "distro" to if (rooted) "ubuntu-chroot" else "termux-native",
+                        "distro" to if (rooted) "$installedDistro-chroot" else "termux-native",
                         "installedDE" to if (rooted) {
-                            if (chrootRuntime.isDesktopInstalled()) "xfce4" else ""
+                            chrootRuntime.getInstalledDE()
                         } else {
                             linuxRuntime.getInstalledDE()
                         },
@@ -338,7 +339,7 @@ class MainActivity : FlutterActivity() {
                         try {
                             val distro = call.argument<String>("distro") ?: "ubuntu"
 
-                            if (distro !in setOf("ubuntu", "alpine", "kali")) {
+                            if (distro !in setOf("ubuntu", "kali")) {
                                 runOnUiThread { result.success(false) }
                                 return@installThread
                             }
