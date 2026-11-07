@@ -176,13 +176,37 @@ class RootfsManager(private val context: Context) {
         initialDownloadedBytes: Long,
         onProgress: (Double, String) -> Unit
     ) {
-        var downloadedBytes = initialDownloadedBytes
+                var downloadedBytes = initialDownloadedBytes
+        val responseCode = connection.responseCode
+
+        if (responseCode == 416) {
+            connection.disconnect()
+            targetFile.delete()
+            throw IllegalStateException("Resume request rejected. Partial download removed.")
+        }
+
+        if (initialDownloadedBytes > 0L &&
+            responseCode != HttpURLConnection.HTTP_PARTIAL
+        ) {
+            connection.disconnect()
+            targetFile.delete()
+            throw IllegalStateException("Server did not honor download resume. Retry from the beginning.")
+        }
+
+        if (initialDownloadedBytes == 0L &&
+            responseCode != HttpURLConnection.HTTP_OK
+        ) {
+            connection.disconnect()
+            throw IllegalStateException("Unexpected download HTTP status: $responseCode")
+        }
+
         val totalBytes = connection.contentLengthLong
         val expectedTotal = downloadedBytes + totalBytes
 
         if (totalBytes == 0L) {
-            onProgress(1.0, "$distroName downloaded successfully")
-            return
+            connection.disconnect()
+            targetFile.delete()
+            throw IllegalStateException("Server returned an empty download.")
         }
 
         val buffer = ByteArray(BUFFER_SIZE)
