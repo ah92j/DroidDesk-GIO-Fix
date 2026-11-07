@@ -5,11 +5,19 @@ on:
   push:
     branches:
       - main
+      - security/hardening-phase-1
     paths:
       - '.github/workflows/droiddesk-patch-and-build.yml'
       - 'app/android/app/build.gradle.kts'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootShell.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
+      - 'app/lib/state/app_state.dart'
+      - 'app/lib/screens/setup/setup_progress.dart'
+      - 'app/lib/screens/home_screen.dart'
       - 'app/pubspec.yaml'
 
 permissions:
@@ -35,6 +43,18 @@ jobs:
           profile = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
           ).read_text()
+          root_shell = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootShell.kt'
+          ).read_text()
+          chroot = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
+          ).read_text()
+          activity = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
+          ).read_text()
+          updater = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
+          ).read_text()
           pubspec = Path('app/pubspec.yaml').read_text()
 
           required_runtime = [
@@ -56,18 +76,48 @@ jobs:
               '<property name="style" type="int" value="2"/>',
           ]
 
+          required_root_shell = [
+              'fun execChecked(command: String): String',
+              'if (exitCode != 0)',
+          ]
+
+          required_chroot = [
+              'fun getInstalledDistro(): String = rootfsManager.getInstalledDistro()',
+              'private fun isMountPresent(target: String): Boolean',
+              'private fun mountIfNeeded(relative: String, mountArgs: String)',
+              'val dnsConfig = "nameserver 8.8.8.8',
+              'rootShell.execChecked(',
+          ]
+
+          required_activity = [
+              'val installedDistro = chrootRuntime.getInstalledDistro()',
+              'setOf("ubuntu", "kali")',
+              '"$installedDistro-chroot"',
+          ]
+
+          required_updater = [
+              'private const val MAX_UPDATE_BYTES = 512L * 1024L * 1024L',
+              'private fun requireHttpsUrl(raw: String): URL',
+              'current = requireHttpsUrl(URL(current, location).toString())',
+              'val verifiedApk = requireManagedApk(context, apk)',
+          ]
+
           missing = [item for item in required_runtime if item not in runtime]
           missing.extend(item for item in required_profile if item not in profile)
+          missing.extend(item for item in required_root_shell if item not in root_shell)
+          missing.extend(item for item in required_chroot if item not in chroot)
+          missing.extend(item for item in required_activity if item not in activity)
+          missing.extend(item for item in required_updater if item not in updater)
 
-          if 'version: 1.3.3+8' not in pubspec:
-              missing.append('version: 1.3.3+8')
+          if 'version: 1.3.4+9' not in pubspec:
+              missing.append('version: 1.3.4+9')
 
           if missing:
               raise SystemExit(
                   'Missing expected committed source changes: ' + '; '.join(missing)
               )
 
-          print('Runtime audio, GIO, XFCE desktop and version checks passed.')
+          print('Audio, GIO, chroot mounts, distro status, updater security, XFCE and version checks passed.')
           PY
 
       - name: Set up Java 17
@@ -79,7 +129,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.0'
+          flutter-version: '3.47.9'
           channel: stable
           cache: true
 
@@ -129,7 +179,7 @@ jobs:
             -storepass "$DROIDDESK_KEYSTORE_PASSWORD" \
             -alias "$DROIDDESK_KEY_ALIAS" >/dev/null
 
-                    echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
           echo "Permanent release keystore loaded and alias validated."
 
@@ -191,7 +241,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-GIO-Fix-1.3.3-arm64-permanent-key
+          name: DroidDesk-GIO-Fix-1.3.4-arm64-permanent-key
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
