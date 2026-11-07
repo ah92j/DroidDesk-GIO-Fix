@@ -25,7 +25,6 @@ internal object AndroidPcmAudioOutput {
     private const val TAG = "DroidDeskAudio"
     const val SINK_NAME = "droiddesk_android"
     const val SAMPLE_RATE = 48_000
-    private const val CHANNEL_COUNT = 2
     private const val BYTES_PER_FRAME = 4
 
     private class Session(
@@ -148,18 +147,20 @@ internal object AndroidPcmAudioOutput {
                 // writer, so no PCM data is lost during server startup.
                 stream = FileInputStream(session.fifo)
                 session.input = stream
+                var pendingBytes = 0
                 Log.i(TAG, "PulseAudio pipe sink connected to Android AudioTrack")
 
                 while (session.running.get()) {
-                    val count = stream.read(buffer)
+                    val count = stream.read(
+                        buffer,
+                        pendingBytes,
+                        buffer.size - pendingBytes,
+                    )
                     if (count < 0) break
                     if (count == 0) continue
 
-                    // PulseAudio sends s16le stereo frames. Keep writes aligned
-                    // to complete four-byte frames.
-                    val alignedCount = count - (count % BYTES_PER_FRAME)
-                    if (alignedCount == 0) continue
-
+                    val availableBytes = pendingBytes + count
+                    val alignedCount = availableBytes - (availableBytes % BYTES_PER_FRAME)
                     var offset = 0
                     while (offset < alignedCount && session.running.get()) {
                         val written = session.track.write(
@@ -176,6 +177,19 @@ internal object AndroidPcmAudioOutput {
                         } else {
                             offset += written
                         }
+                    }
+
+                    // Preserve the trailing bytes until the next FIFO read so
+                    // every AudioTrack write starts on a complete stereo frame.
+                    pendingBytes = availableBytes - alignedCount
+                    if (pendingBytes > 0) {
+                        System.arraycopy(
+                            buffer,
+                            alignedCount,
+                            buffer,
+                            0,
+                            pendingBytes,
+                        )
                     }
                 }
             } catch (error: Exception) {
