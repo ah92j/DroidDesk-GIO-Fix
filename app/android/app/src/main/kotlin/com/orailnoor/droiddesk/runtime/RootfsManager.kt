@@ -450,21 +450,40 @@ class RootfsManager(private val context: Context) {
         thread(name = "rootfs-extract") {
             try {
                 val distro = getInstalledDistro()
-                val tarball = File(downloadDir, "${distro}-rootfs.tar." + (if (distro == "kali") "xz" else "gz"))
+                val expectedSha256 = DISTRO_SHA256[distro]
+                    ?: throw IllegalStateException("Unknown or unsupported distro")
 
-                if (!tarball.exists()) {
-                    onProgress(-1.0, "Rootfs tarball not found. Download first.")
+                val extension = if (distro == "kali") "xz" else "gz"
+                val tarball = File(downloadDir, "$distro-rootfs.tar.$extension")
+
+                if (
+                    !tarball.isFile ||
+                    java.nio.file.Files.isSymbolicLink(tarball.toPath())
+                ) {
+                    onProgress(-1.0, "Rootfs tarball is missing or invalid. Download first.")
                     return@thread
                 }
 
-                // Clean previous rootfs
-                if (rootfsDir.exists()) {
-                    rootfsDir.deleteRecursively()
+                if (tarball.canonicalFile.parentFile != downloadDir.canonicalFile) {
+                    throw SecurityException("Rootfs archive is outside download directory")
                 }
-                rootfsDir.mkdirs()
+
+                verifySha256(tarball, expectedSha256)
+
+                val setupMarker = File(context.filesDir, "SETUP_COMPLETE")
+                if (setupMarker.exists() && !setupMarker.delete()) {
+                    throw IllegalStateException("Could not clear previous setup marker")
+                }
+
+                if (rootfsDir.exists() && !rootfsDir.deleteRecursively()) {
+                    throw IllegalStateException("Could not remove previous rootfs")
+                }
+
+                if (!rootfsDir.mkdirs() && !rootfsDir.isDirectory) {
+                    throw IllegalStateException("Could not create rootfs directory")
+                }
 
                 onProgress(0.1, "Extracting ${DISTRO_NAMES[distro]}...")
-                Log.i(TAG, "Extracting rootfs from ${tarball.absolutePath}")
 
                 // Use ProcessBuilder to run tar extraction
                 // Android's toybox includes tar, and we can use xz if available
