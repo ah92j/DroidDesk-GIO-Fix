@@ -2382,45 +2382,93 @@ class LinuxRuntime(private val context: Context) {
         }
     }
 
-    private fun isPulseAudioReady(): Boolean {
+    private fun isPulseAudioReady(requiredSink: String? = null): Boolean {
         val sinks = getPulseAudioSinkNames() ?: return false
-        val realSinks = sinks.filterNot { it.equals("auto_null", ignoreCase = true) }
-        if (realSinks.isEmpty()) {
-            Log.w(TAG, "PulseAudio TCP server is reachable but only the silent auto_null sink exists")
-            return false
+        if (requiredSink != null) {
+            val ready = requiredSink in sinks
+            if (!ready) Log.w(TAG, "Required Android PCM sink is not available yet")
+            return ready
         }
 
-        Log.i(TAG, "PulseAudio hardware output is ready: ${realSinks.joinToString()}")
+        val realSinks = sinks.filterNot { it.equals("auto_null", ignoreCase = true) }
+        if (realSinks.isEmpty()) {
+            Log.w(TAG, "PulseAudio exposes only the silent auto_null sink")
+            return false
+        }
+        Log.i(TAG, "PulseAudio output sinks: ${realSinks.joinToString()}")
         return true
     }
 
     /**
-     * The socket relocation hook is needed by the Termux-compatible packages,
-     * but it can interfere with Android's native audio backends. Keep it out of
-     * the PulseAudio daemon and its pactl probes.
+     * Retain the relocated Termux environment. The socket hook is needed by
+     * this bundled userspace and does not redirect the app-private PCM FIFO.
      */
     private fun getPulseAudioEnvironment(pulseDir: File): MutableMap<String, String> {
-        val environment = getTermuxEnv().toMutableMap()
-        environment.remove("LD_PRELOAD")
-        environment.remove("LD_PRELOAD_32")
-        environment["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
-        environment["PULSE_RUNTIME_PATH"] = pulseDir.absolutePath
-        return environment
+        return getTermuxEnv().toMutableMap().apply {
+            this["PULSE_SERVER"] = "tcp:127.0.0.1:4713"
+            this["PULSE_RUNTIME_PATH"] = pulseDir.absolutePath
+            this["PULSE_SINK"] = AndroidPcmAudioOutput.SINK_NAME
+        }
+    }
+
+    private fun setPulseAudioDefaultSink(sinkName: String): Boolean {
+        val pactl = File(binDir, "pactl")
+        if (!pactl.canExecute()) return false
+
+        return runCatching {
+            val process = ProcessBuilder(
+                pactl.absolutePath,
+                "-s", "tcp:127.0.0.1:4713",
+                "set-default-sink", sinkName,
+            ).directory(homeDir)
+                .redirectErrorStream(true)
+                .also { builder ->
+                    builder.environment().clear()
+                    builder.environment().putAll(getPulseAudioEnvironment(File(tmpDir, "pulse")))
+                }
+                .start()
+
+            if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor()
+                false
+            } else {
+                val output = process.inputStream.bufferedReader().use { it.readText() }
+                if (process.exitValue() != 0) {
+                    Log.w(TAG, "Could not select PulseAudio sink $sinkName: ${output.trim().take(400)}")
+                    false
+                } else {
+                    true
+                }
+            }
+        }.getOrElse {
+            Log.w(TAG, "Failed to select PulseAudio sink $sinkName", it)
+            false
+        }
     }
 
     private fun startPulseAudio(): Boolean {
         val pulseDir = File(tmpDir, "pulse").apply { mkdirs() }
         val pulseLog = File(pulseDir, "pulseaudio.log")
+        val audioPipe = File(pulseDir, "android-audio.pcm")
         val existing = pulseProcess
 
+        if (!AndroidPcmAudioOutput.start(audioPipe)) {
+            Log.e(TAG, "Android AudioTrack bridge could not be initialized")
+            return false
+        }
+
         if (existing?.isAlive == true) {
-            val existingDeadline = System.currentTimeMillis() + 2_500
+            val existingDeadline = System.currentTimeMillis() + 1_500
             while (System.currentTimeMillis() < existingDeadline) {
-                if (isPulseAudioReady()) return true
-                Thread.sleep(250)
+                if (isPulseAudioReady(AndroidPcmAudioOutput.SINK_NAME)) {
+                    setPulseAudioDefaultSink(AndroidPcmAudioOutput.SINK_NAME)
+                    return true
+                }
+                Thread.sleep(150)
             }
 
-            Log.w(TAG, "Existing PulseAudio process has no usable hardware sink; restarting it")
+            Log.w(TAG, "Replacing the previous PulseAudio server with the Android PCM pipe sink")
             runCatching {
                 existing.destroy()
                 if (!existing.waitFor(1_500, TimeUnit.MILLISECONDS)) {
@@ -2431,111 +2479,96 @@ class LinuxRuntime(private val context: Context) {
         }
 
         pulseProcess = null
-        if (isPulseAudioReady()) {
-            Log.i(TAG, "Reusing an existing PulseAudio hardware output server")
+        if (isPulseAudioReady(AndroidPcmAudioOutput.SINK_NAME)) {
+            setPulseAudioDefaultSink(AndroidPcmAudioOutput.SINK_NAME)
+            Log.i(TAG, "Reusing the existing DroidDesk Android PCM sink")
             return true
         }
 
         val pulseBinary = File(binDir, "pulseaudio")
         if (!pulseBinary.canExecute()) {
             Log.e(TAG, "PulseAudio executable is missing: ${pulseBinary.absolutePath}")
+            AndroidPcmAudioOutput.stop()
             return false
         }
 
         val moduleDir = File(prefixDir, "lib/pulseaudio/modules")
-        // Oboe is preferred when a package repository provides it because it
-        // handles vendor-specific Android audio routing. Official Termux builds
-        // also provide AAudio and the older OpenSL ES backend.
-        val candidateModules = listOf(
-            "module-oboe-sink",
-            "module-aaudio-sink",
-            "module-sles-sink",
-        ).filter { File(moduleDir, "$it.so").isFile }
-
-        if (candidateModules.isEmpty()) {
-            Log.e(TAG, "No Android PulseAudio output module was installed in ${moduleDir.absolutePath}")
+        val pipeModule = File(moduleDir, "module-pipe-sink.so")
+        if (!pipeModule.isFile) {
+            Log.e(TAG, "PulseAudio pipe-sink module is missing: ${pipeModule.absolutePath}")
+            AndroidPcmAudioOutput.stop()
             return false
         }
 
-        for (sinkModule in candidateModules) {
-            File(pulseDir, "native").delete()
-            val command = listOf(
-                pulseBinary.absolutePath,
-                "--daemonize=no",
-                "--use-pid-file=no",
-                "--exit-idle-time=-1",
-                "--dl-search-path=${moduleDir.absolutePath}",
-                "--log-level=debug",
-                "-n",
-                "-L", sinkModule,
-                "-L", "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713",
-                "-L", "module-native-protocol-unix socket=${File(pulseDir, "native").absolutePath}",
-            )
+        File(pulseDir, "native").delete()
+        val command = listOf(
+            pulseBinary.absolutePath,
+            "--daemonize=no",
+            "--use-pid-file=no",
+            "--exit-idle-time=-1",
+            "--dl-search-path=${moduleDir.absolutePath}",
+            "--log-level=debug",
+            "-n",
+            "-L",
+            "module-pipe-sink file=${audioPipe.absolutePath} " +
+                "sink_name=${AndroidPcmAudioOutput.SINK_NAME} " +
+                "format=s16le rate=${AndroidPcmAudioOutput.SAMPLE_RATE} channels=2",
+            "-L",
+            "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713",
+            "-L",
+            "module-native-protocol-unix socket=${File(pulseDir, "native").absolutePath}",
+        )
 
-            runCatching {
-                pulseLog.writeText("===== DroidDesk PulseAudio startup: $sinkModule =====\\n")
-            }.onFailure { Log.w(TAG, "Could not reset PulseAudio log", it) }
+        runCatching {
+            pulseLog.writeText("===== DroidDesk PulseAudio PCM pipe startup =====\\n")
+        }.onFailure { Log.w(TAG, "Could not reset PulseAudio log", it) }
 
-            val started = try {
-                val builder = ProcessBuilder(command)
-                    .directory(homeDir.apply { mkdirs() })
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.appendTo(pulseLog))
-
-                val environment = builder.environment()
-                environment.clear()
-                environment.putAll(getPulseAudioEnvironment(pulseDir))
-
-                // Older devices can still use OpenSL ES, but load its Android
-                // library explicitly only for that backend.
-                if (sinkModule == "module-sles-sink") {
-                    val openSles = File("/system/lib64/libOpenSLES.so")
-                    if (openSles.isFile) {
-                        environment["LD_PRELOAD"] = openSles.absolutePath
-                    }
-                }
-
-                builder.start()
-            } catch (error: Exception) {
-                Log.e(TAG, "Failed to launch PulseAudio with $sinkModule", error)
-                continue
-            }
-
-            pulseProcess = started
-            Log.i(TAG, "Trying Android audio backend $sinkModule (pid=${processPid(started) ?: -1})")
-
-            val deadline = System.currentTimeMillis() + 8_000
-            while (System.currentTimeMillis() < deadline && started.isAlive) {
-                if (isPulseAudioReady()) {
-                    Log.i(TAG, "PulseAudio is ready using $sinkModule")
-                    return true
-                }
-                Thread.sleep(250)
-            }
-
-            val exitCode = runCatching { started.exitValue() }.getOrDefault(-1)
-            val logTail = runCatching {
-                pulseLog.readLines().takeLast(45).joinToString("\\n")
-            }.getOrDefault("could not read PulseAudio log")
-            Log.w(
-                TAG,
-                "PulseAudio backend $sinkModule did not produce a hardware sink " +
-                    "(exit=$exitCode): $logTail"
-            )
-
-            runCatching {
-                if (started.isAlive) {
-                    started.destroy()
-                    if (!started.waitFor(1_500, TimeUnit.MILLISECONDS)) {
-                        started.destroyForcibly()
-                        started.waitFor()
-                    }
-                }
-            }.onFailure { Log.w(TAG, "Could not stop failed PulseAudio backend $sinkModule", it) }
-            pulseProcess = null
+        val started = try {
+            val builder = ProcessBuilder(command)
+                .directory(homeDir.apply { mkdirs() })
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.appendTo(pulseLog))
+            val environment = builder.environment()
+            environment.clear()
+            environment.putAll(getPulseAudioEnvironment(pulseDir))
+            builder.start()
+        } catch (error: Exception) {
+            Log.e(TAG, "Failed to launch PulseAudio with the Android PCM pipe sink", error)
+            AndroidPcmAudioOutput.stop()
+            return false
         }
 
-        Log.e(TAG, "No PulseAudio Android backend created a real output sink")
+        pulseProcess = started
+        Log.i(TAG, "PulseAudio started with Android PCM sink (pid=${processPid(started) ?: -1})")
+
+        val deadline = System.currentTimeMillis() + 8_000
+        while (System.currentTimeMillis() < deadline && started.isAlive) {
+            if (isPulseAudioReady(AndroidPcmAudioOutput.SINK_NAME)) {
+                val selected = setPulseAudioDefaultSink(AndroidPcmAudioOutput.SINK_NAME)
+                Log.i(TAG, "Android PCM sink is ready; default sink selected=$selected")
+                return true
+            }
+            Thread.sleep(200)
+        }
+
+        val exitCode = runCatching { started.exitValue() }.getOrDefault(-1)
+        val logTail = runCatching {
+            pulseLog.readLines().takeLast(60).joinToString("\\n")
+        }.getOrDefault("could not read PulseAudio log")
+        Log.e(TAG, "PulseAudio did not create the DroidDesk PCM sink (exit=$exitCode): $logTail")
+
+        runCatching {
+            if (started.isAlive) {
+                started.destroy()
+                if (!started.waitFor(1_500, TimeUnit.MILLISECONDS)) {
+                    started.destroyForcibly()
+                    started.waitFor()
+                }
+            }
+        }.onFailure { Log.w(TAG, "Could not stop failed PulseAudio PCM server", it) }
+
+        pulseProcess = null
+        AndroidPcmAudioOutput.stop()
         return false
     }
 
@@ -2547,6 +2580,7 @@ class LinuxRuntime(private val context: Context) {
             process.destroy()
             if (!process.waitFor(1_500, TimeUnit.MILLISECONDS)) process.destroyForcibly()
         }
+        AndroidPcmAudioOutput.stop()
     }
 
     fun stopSession() {
