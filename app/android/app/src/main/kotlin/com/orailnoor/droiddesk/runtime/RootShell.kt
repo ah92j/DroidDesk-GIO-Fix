@@ -80,6 +80,26 @@ class RootShell(private val context: Context) {
     }
 
     /**
+     * Execute a command as root and reject a non-zero process exit status.
+     * Use this when a failed command must not leave a partially configured runtime.
+     */
+    fun execChecked(command: String): String {
+        val su = findSuPath() ?: throw RootException("No su binary found. Is this device rooted?")
+        Log.d(TAG, "su checked exec: $command")
+        val process = ProcessBuilder(su, "-c", command)
+            .redirectErrorStream(true)
+            .start()
+
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val exitCode = process.waitFor()
+        if (exitCode != 0) {
+            val detail = output.trim().takeIf { it.isNotEmpty() } ?: "no command output"
+            throw RootException("Command failed with exit code $exitCode: $detail")
+        }
+        return output
+    }
+
+    /**
      * Execute a shell command as root. Returns stdout+stderr combined.
      */
     fun exec(command: String): String {
