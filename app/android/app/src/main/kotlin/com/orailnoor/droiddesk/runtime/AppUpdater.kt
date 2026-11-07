@@ -24,6 +24,7 @@ import java.security.MessageDigest
 object AppUpdater {
     private const val TAG = "AppUpdater"
     private const val DIR = "updates"
+    private const val MAX_UPDATE_BYTES = 512L * 1024L * 1024L
 
     class UpdateException(val code: String, message: String) : Exception(message)
 
@@ -68,35 +69,64 @@ object AppUpdater {
         onProgress: (Long, Long) -> Unit,
     ): File {
         cancelled = false
-        val dir = File(context.cacheDir, DIR).apply { mkdirs() }
+        requireHttpsUrl(url)
+        if (expectedSize > MAX_UPDATE_BYTES) {
+            throw UpdateException("too_large", "The update APK exceeds the maximum allowed size")
+        }
+
+        val dir = File(context.cacheDir, DIR)
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw UpdateException("storage", "Could not create the update cache directory")
+        }
+        if (!dir.isDirectory) {
+            throw UpdateException("storage", "The update cache path is not a directory")
+        }
+
         val safeTag = tag.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val apk = File(dir, "DroidDesk-$safeTag.apk")
         val part = File(dir, "${apk.name}.part")
         dir.listFiles()?.filter { it != apk && it != part }?.forEach { it.delete() }
 
-        if (!(apk.isFile && (expectedSize <= 0 || apk.length() == expectedSize))) {
+        val cachedLength = if (apk.isFile) apk.length() else 0L
+        val cachedValid = cachedLength in 1..MAX_UPDATE_BYTES &&
+            (expectedSize <= 0 || cachedLength == expectedSize)
+        if (!cachedValid) {
+            apk.delete()
             part.delete()
-            fetch(url, part, expectedSize, onProgress)
+            try {
+                fetch(url, part, expectedSize, onProgress)
+            } catch (error: Exception) {
+                part.delete()
+                throw error
+            }
             if (cancelled) {
                 part.delete()
                 throw UpdateException("cancelled", "Download cancelled")
+            }
+            if (part.length() !in 1..MAX_UPDATE_BYTES) {
+                part.delete()
+                throw UpdateException("size_mismatch", "Downloaded APK is empty or exceeds the allowed size")
             }
             if (expectedSize > 0 && part.length() != expectedSize) {
                 part.delete()
                 throw UpdateException("size_mismatch", "Downloaded file is incomplete")
             }
-            apk.delete()
-            if (!part.renameTo(apk)) throw UpdateException("storage", "Could not save the update")
+            if (!part.renameTo(apk)) {
+                part.delete()
+                throw UpdateException("storage", "Could not save the update")
+            }
         }
-        verify(context, apk)
-        return apk
+
+        val verifiedApk = requireManagedApk(context, apk)
+        verify(context, verifiedApk)
+        return verifiedApk
     }
 
     private fun fetch(url: String, target: File, expectedSize: Long, onProgress: (Long, Long) -> Unit) {
-        var current = url
+        var current = requireHttpsUrl(url)
         var redirects = 0
         while (true) {
-            val connection = (URL(current).openConnection() as HttpURLConnection).apply {
+            val connection = (current.openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
                 connectTimeout = 15_000
                 readTimeout = 30_000
@@ -108,13 +138,20 @@ object AppUpdater {
                     val location = connection.getHeaderField("Location")
                         ?: throw UpdateException("network", "Redirect without location")
                     if (++redirects > 5) throw UpdateException("network", "Too many redirects")
-                    current = URL(URL(current), location).toString()
+                    current = requireHttpsUrl(URL(current, location).toString())
                     continue
                 }
                 if (code != HttpURLConnection.HTTP_OK) {
                     throw UpdateException("network", "Server returned $code")
                 }
-                val total = connection.contentLengthLong.takeIf { it > 0 } ?: expectedSize
+                val contentLength = connection.contentLengthLong
+                if (contentLength > MAX_UPDATE_BYTES) {
+                    throw UpdateException("too_large", "The update APK exceeds the maximum allowed size")
+                }
+                if (expectedSize > 0 && contentLength > 0 && contentLength != expectedSize) {
+                    throw UpdateException("size_mismatch", "The server's APK size does not match the release metadata")
+                }
+                val total = contentLength.takeIf { it > 0 } ?: expectedSize
                 var done = 0L
                 var lastReported = -1L
                 connection.inputStream.use { input ->
@@ -123,6 +160,9 @@ object AppUpdater {
                         while (!cancelled) {
                             val read = input.read(buffer)
                             if (read < 0) break
+                            if (read.toLong() > MAX_UPDATE_BYTES - done) {
+                                throw UpdateException("too_large", "The update APK exceeds the maximum allowed size")
+                            }
                             output.write(buffer, 0, read)
                             done += read
                             // Report about every 1%.
@@ -142,6 +182,31 @@ object AppUpdater {
                 connection.disconnect()
             }
         }
+    }
+
+    private fun requireHttpsUrl(raw: String): URL {
+        val parsed = try {
+            URL(raw)
+        } catch (_: Exception) {
+            throw UpdateException("invalid_url", "The update URL is invalid")
+        }
+        if (!parsed.protocol.equals("https", ignoreCase = true) || parsed.host.isBlank()) {
+            throw UpdateException("insecure_url", "Update downloads must use HTTPS")
+        }
+        return parsed
+    }
+
+    private fun requireManagedApk(context: Context, apk: File): File {
+        val updatesDir = File(context.cacheDir, DIR).canonicalFile
+        val canonicalApk = apk.canonicalFile
+        if (canonicalApk.parentFile != updatesDir || !canonicalApk.isFile) {
+            throw UpdateException("invalid_path", "The update APK is outside the app update cache")
+        }
+        val size = canonicalApk.length()
+        if (size !in 1..MAX_UPDATE_BYTES) {
+            throw UpdateException("invalid_size", "The update APK has an invalid size")
+        }
+        return canonicalApk
     }
 
     private fun verify(context: Context, apk: File) {
@@ -177,7 +242,9 @@ object AppUpdater {
 
     /** Opens the system installer for a verified APK in the app cache. */
     fun install(context: Context, apk: File) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
+        val verifiedApk = requireManagedApk(context, apk)
+        verify(context, verifiedApk)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", verifiedApk)
         val intent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/vnd.android.package-archive")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
