@@ -15,6 +15,7 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
       - 'app/lib/state/app_state.dart'
       - 'app/lib/screens/setup/setup_progress.dart'
@@ -41,6 +42,9 @@ jobs:
           runtime = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
           ).read_text()
+          audio_output = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
+          ).read_text()
           profile = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
           ).read_text()
@@ -64,18 +68,25 @@ jobs:
               'env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath',
               'private fun getPulseAudioSinkNames(): List<String>?',
               'private fun getPulseAudioEnvironment(pulseDir: File)',
-              'environment.remove("LD_PRELOAD")',
-              '"list", "short", "sinks"',
-              '"module-oboe-sink"',
-              '"module-aaudio-sink"',
-              'env["GIO_LAUNCH_DESKTOP"]',
-              'private fun isPulseAudioReady(): Boolean',
+              'private fun isPulseAudioReady(requiredSink: String? = null): Boolean',
+              'private fun setPulseAudioDefaultSink(sinkName: String): Boolean',
               'private fun startPulseAudio(): Boolean',
               'private fun stopPulseAudio()',
-              'module-aaudio-sink',
+              'module-pipe-sink file=',
+              'AndroidPcmAudioOutput.start(audioPipe)',
+              'AndroidPcmAudioOutput.SINK_NAME',
               'port=4713',
               '# Audio is started and supervised by LinuxRuntime in the Android process.',
               'if (!startPulseAudio())',
+          ]
+
+          required_audio_output = [
+              'internal object AndroidPcmAudioOutput',
+              'const val SINK_NAME = "droiddesk_android"',
+              'AudioTrack.Builder()',
+              'AudioTrack.WRITE_BLOCKING',
+              'Os.mkfifo(',
+              'private fun consumePcm(session: Session)',
           ]
 
           required_profile = [
@@ -111,14 +122,15 @@ jobs:
           ]
 
           missing = [item for item in required_runtime if item not in runtime]
+          missing.extend(item for item in required_audio_output if item not in audio_output)
           missing.extend(item for item in required_profile if item not in profile)
           missing.extend(item for item in required_root_shell if item not in root_shell)
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
 
-          if 'version: 1.3.5+10' not in pubspec:
-              missing.append('version: 1.3.5+10')
+          if 'version: 1.3.6+11' not in pubspec:
+              missing.append('version: 1.3.6+11')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
@@ -128,7 +140,7 @@ jobs:
                   'Missing expected committed source changes: ' + '; '.join(missing)
               )
 
-          print('Audio sinks/backends, GIO, chroot mounts, distro status, updater security, permissions, XFCE and version checks passed.')
+          print('Android AudioTrack pipe, PulseAudio sink routing, GIO, chroot mounts, distro status, updater security, permissions, XFCE and version checks passed.')
           PY
 
       - name: Set up Java 17
@@ -256,7 +268,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-GIO-Fix-1.3.5-arm64-permanent-key
+          name: DroidDesk-GIO-Fix-1.3.6-arm64-permanent-key
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
