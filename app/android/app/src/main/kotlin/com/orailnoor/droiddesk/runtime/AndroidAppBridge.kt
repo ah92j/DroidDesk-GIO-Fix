@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.LocalServerSocket
 import android.net.LocalSocket
+import android.os.Process
 import android.provider.Settings
 import android.util.Log
 import java.io.File
@@ -312,7 +313,14 @@ object AndroidAppBridge {
         var client: LocalSocket? = null
         try {
             client = socket.accept()
-            client.soTimeout = 2000
+
+val peerUid = client.peerCredentials.uid
+if (peerUid != Process.myUid()) {
+    Log.w(TAG, "Rejected launcher client from UID=$peerUid")
+    continue
+}
+
+client.soTimeout = 2000
 
             val input = client.inputStream
             val buffer = ByteArray(256)
