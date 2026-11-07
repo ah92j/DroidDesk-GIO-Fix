@@ -7,6 +7,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import javax.net.ssl.HttpsURLConnection
 import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import kotlin.concurrent.thread
@@ -178,6 +179,65 @@ class RootfsManager(private val context: Context) {
                 onProgress(-1.0, "Download failed: ${e.message}")
             }
         }
+    }
+    private fun openHttpsConnection(
+        rawUrl: String,
+        rangeStart: Long
+    ): HttpsURLConnection {
+        var currentUrl = URL(rawUrl)
+
+        for (redirectCount in 0..5) {
+            if (
+                !currentUrl.protocol.equals("https", ignoreCase = true) ||
+                currentUrl.userInfo != null
+            ) {
+                throw SecurityException("Blocked non-HTTPS download URL")
+            }
+
+            val connection = currentUrl.openConnection() as? HttpsURLConnection
+                ?: throw SecurityException("HTTPS connection required")
+
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 30000
+            connection.readTimeout = 30000
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept-Encoding", "identity")
+
+            if (rangeStart > 0L) {
+                connection.setRequestProperty("Range", "bytes=$rangeStart-")
+            }
+
+            val responseCode = connection.responseCode
+
+            if (responseCode in setOf(301, 302, 303, 307, 308)) {
+                val location = connection.getHeaderField("Location")
+                connection.disconnect()
+
+                if (location.isNullOrBlank()) {
+                    throw SecurityException("Redirect location is missing")
+                }
+
+                if (redirectCount == 5) {
+                    throw SecurityException("Too many download redirects")
+                }
+
+                val redirectedUrl = URL(currentUrl, location)
+
+                if (
+                    !redirectedUrl.protocol.equals("https", ignoreCase = true) ||
+                    redirectedUrl.userInfo != null
+                ) {
+                    throw SecurityException("Blocked insecure download redirect")
+                }
+
+                currentUrl = redirectedUrl
+                continue
+            }
+
+            return connection
+        }
+
+        throw IllegalStateException("Download redirect limit exceeded")
     }
     private fun verifySha256(file: File, expectedSha256: String) {
         if (!file.isFile) {
