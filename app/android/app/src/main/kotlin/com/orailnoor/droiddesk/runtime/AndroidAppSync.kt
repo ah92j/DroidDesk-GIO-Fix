@@ -74,7 +74,7 @@ object AndroidAppSync {
                         [Desktop Entry]
                         Version=1.0
                         Type=Application
-                                                Name=${escapeDesktopEntryValue(appName)}
+                        Name=${escapeDesktopEntryValue(appName)}
                         Comment=Launch Android App: $packageName
                         Icon=/root/.icons/android/$packageName.png
                         Exec=sh -c "echo '$packageName' > /tmp/android_intent_pipe"
