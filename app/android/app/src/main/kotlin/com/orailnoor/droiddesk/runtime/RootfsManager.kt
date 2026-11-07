@@ -4,222 +4,275 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
-import javax.net.ssl.HttpsURLConnection
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.util.zip.GZIPInputStream
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
 
 /**
- * Manages Linux rootfs downloads, extraction, and lifecycle.
+ * Downloads, verifies, extracts and validates ARM64 Linux root filesystems.
  *
- * Rootfs images are standard arm64 Linux distributions downloaded from
- * official or community mirrors. They are used only by DroidDesk's rooted
- * chroot path; non-root devices use the native Termux/TUR runtime instead.
+ * Root filesystems are stored under the app's private files directory. Downloads
+ * are SHA-256 pinned, HTTPS-only (including redirects), resumable, and bounded.
+ * Extraction is staged separately; the current rootfs is replaced only after
+ * the new tree passes validation and configuration.
  *
- * Download flow:
- *   1. User selects distro in Flutter wizard
- *   2. Download tarball (~300-500 MB compressed) with progress
- *   3. Extract to app's private storage (2-4 GB uncompressed)
- *   4. Configure user, sudo, apt sources
+ * Desktop package installation belongs to ChrootRuntime. The legacy installer
+ * overload accepting LinuxRuntime is retained for source compatibility, but
+ * refuses to run commands in the wrong runtime.
  */
 class RootfsManager(private val context: Context) {
 
     companion object {
         private const val TAG = "RootfsManager"
-        private const val BUFFER_SIZE = 8192
+        private const val BUFFER_SIZE = 64 * 1024
+        private const val MAX_DOWNLOAD_BYTES = 2L * 1024L * 1024L * 1024L
+        private const val MAX_ARCHIVE_ENTRIES = 1_000_000
+        private const val NETWORK_CONNECT_TIMEOUT_MS = 30_000
+        private const val NETWORK_READ_TIMEOUT_MS = 60_000
+        private const val ARCHIVE_PROCESS_TIMEOUT_MINUTES = 90L
+        private const val MAX_LOG_TAIL_BYTES = 8 * 1024L
 
-        // Official rootfs download URLs (arm64)
-        // Minimal rootfs tarballs reused as rooted chroot filesystems.
-        val DISTRO_URLS = mapOf(
+        /** Official ARM64 rootfs archives. */
+        val DISTRO_URLS: Map<String, String> = mapOf(
             "ubuntu" to "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-arm64.tar.gz",
             "alpine" to "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.0-aarch64.tar.gz",
-            "kali" to "https://kali.download/nethunter-images/kali-2026.3/rootfs/kali-nethunter-rootfs-minimal-arm64.tar.xz"
-        )
-        val DISTRO_SHA256 = mapOf(
-            "ubuntu" to "04207713ece899c3740823d33690441ad3a7f0ded1101aca744e2b0f37ac7ff2",
-            "alpine" to "83a79199bf3112c65e62ddf1732b051daf62ed2ddf5a8413c440dc25956116f0",
-            "kali" to "96aeced81a857a987715a14417af05c2934e3e19052d6151c398a1c215448b60"
+            "kali" to "https://kali.download/nethunter-images/current/rootfs/kali-nethunter-rootfs-minimal-arm64.tar.xz",
         )
 
-        val DISTRO_NAMES = mapOf(
+        /** SHA-256 values published by the respective distribution sources. */
+        val DISTRO_SHA256: Map<String, String> = mapOf(
+            "ubuntu" to "04207713ece899c3740823d33690441ad3a7f0ded1101aca744e2b0f37ac7ff2",
+            "alpine" to "83a79199bf3112c65e62ddf1732b051daf62ed2ddf5a8413c440dc25956116f0",
+            "kali" to "96aeced81a857a987715a14417af05c2934e3e19052d6151c398a1c215448b60",
+        )
+
+        val DISTRO_NAMES: Map<String, String> = mapOf(
             "ubuntu" to "Ubuntu 24.04 Base",
             "alpine" to "Alpine Linux 3.20",
-            "kali" to "Kali Linux (NetHunter Minimal)"
+            "kali" to "Kali NetHunter Minimal",
         )
+
+        private val operationLock = ReentrantLock()
+        private val supportedDesktopEnvironments = setOf("xfce4", "lxqt", "mate", "kde")
     }
 
     private val baseDir: File get() = context.filesDir
     private val rootfsDir: File get() = File(baseDir, "rootfs")
+    private val stagingRootfsDir: File get() = File(baseDir, "rootfs.staging")
+    private val backupRootfsDir: File get() = File(baseDir, "rootfs.previous")
     private val downloadDir: File get() = File(baseDir, "downloads")
     private val configFile: File get() = File(baseDir, "distro.conf")
     private val deConfigFile: File get() = File(baseDir, "de.conf")
+    private val setupMarker: File get() = File(baseDir, "SETUP_COMPLETE")
 
-    // ── Status ──
+    // -------------------------------------------------------------------------
+    // Status
+    // -------------------------------------------------------------------------
 
     fun getInstalledDistro(): String {
-        return if (configFile.exists()) configFile.readText().trim() else ""
+        val configured = readPrivateText(configFile)
+        if (configured in DISTRO_URLS.keys) return configured
+
+        val markerValue = readPrivateText(setupMarker)
+        return markerValue.takeIf { it in DISTRO_URLS.keys }.orEmpty()
     }
 
     fun getInstalledDE(): String {
-        return if (deConfigFile.exists()) deConfigFile.readText().trim() else ""
+        return readPrivateText(deConfigFile)
+            .takeIf { it in supportedDesktopEnvironments }
+            .orEmpty()
     }
 
     fun getMissingPackages(): List<String> {
         if (!isRootfsReady()) return listOf("rootfs")
+
         val de = getInstalledDE().ifEmpty { "xfce4" }
-        val deBin = when (de) {
+        val deBinary = when (de) {
             "lxqt" -> "usr/bin/lxqt-session"
             "mate" -> "usr/bin/mate-session"
             "kde" -> "usr/bin/startplasma-x11"
             else -> "usr/bin/xfce4-session"
         }
-        return if (File(rootfsDir, deBin).exists()) {
-            emptyList()
-        } else {
-            listOf(de)
-        }
+
+        return if (File(rootfsDir, deBinary).canExecute()) emptyList() else listOf(de)
     }
 
-    fun getRootfsPath(): String {
-        return rootfsDir.absolutePath
-    }
+    fun getRootfsPath(): String = rootfsDir.absolutePath
 
     fun getRootfsSizeMB(): Long {
-        return if (rootfsDir.exists()) {
-            calculateDirSize(rootfsDir) / (1024 * 1024)
-        } else 0
+        if (!rootfsDir.isDirectory || Files.isSymbolicLink(rootfsDir.toPath())) return 0L
+        return runCatching { calculateDirSize(rootfsDir) / (1024L * 1024L) }
+            .getOrDefault(0L)
     }
-
-    fun isRootfsReady(): Boolean {
-        // Check for critical directories that indicate a valid rootfs
-        return rootfsDir.exists() &&
-                File(rootfsDir, "bin").exists() &&
-                File(rootfsDir, "usr").exists() &&
-                File(rootfsDir, "etc").exists()
-    }
-
-    // ── Download ──
 
     /**
-     * Download a distro rootfs tarball with progress callbacks.
-     * Runs on a background thread.
+     * A rootfs is ready only when its completion marker matches the selected
+     * distribution and its critical operating-system files are present.
+     * The old marker value "done" is accepted for existing installations.
      */
+    fun isRootfsReady(): Boolean {
+        return runCatching {
+            val distro = getInstalledDistro()
+            if (distro !in DISTRO_URLS.keys) return@runCatching false
+            if (!rootfsDir.isDirectory || Files.isSymbolicLink(rootfsDir.toPath())) {
+                return@runCatching false
+            }
+
+            val marker = readPrivateText(setupMarker)
+            if (marker != distro && marker != "done") return@runCatching false
+
+            validateRootfsTree(rootfsDir, distro)
+        }.getOrDefault(false)
+    }
+
+    // -------------------------------------------------------------------------
+    // Download
+    // -------------------------------------------------------------------------
+
+    /** Downloads and verifies a distribution archive on a worker thread. */
     fun downloadRootfs(
         distro: String,
-        onProgress: (progress: Double, status: String) -> Unit
+        onProgress: (progress: Double, status: String) -> Unit,
     ) {
         thread(name = "rootfs-download") {
+            if (!operationLock.tryLock()) {
+                report(onProgress, -1.0, "Another rootfs operation is already running")
+                return@thread
+            }
+
             try {
                 val url = DISTRO_URLS[distro]
-                    ?: throw IllegalArgumentException("Unknown distro: $distro")
-                val distroName = DISTRO_NAMES[distro] ?: distro
+                    ?: throw IllegalArgumentException("Unknown or unsupported distribution")
+                val expectedSha256 = DISTRO_SHA256[distro]
+                    ?: throw IllegalStateException("SHA-256 is not configured for $distro")
+                val archive = archiveFile(distro)
 
-                downloadDir.mkdirs()
-                val targetFile = File(downloadDir, "${distro}-rootfs.tar." + (if (distro == "kali") "xz" else "gz"))
+                ensureDownloadDirectory()
+                ensureManagedFile(archive, downloadDir)
 
-                onProgress(0.0, "Connecting to download server...")
-                Log.i(TAG, "Downloading $distroName from $url")
+                report(onProgress, 0.0, "Preparing ${DISTRO_NAMES[distro]} download...")
 
-                var downloadedBytes = 0L
+                // If an older installation used the legacy "done" marker, bind
+                // that marker to its current distro before changing distro.conf.
+                preserveLegacyRootfsMarker()
 
-                if (targetFile.exists()) {
-                    downloadedBytes = targetFile.length()
+                if (archive.isFile && matchesSha256(archive, expectedSha256)) {
+                    writeAtomically(configFile, distro)
+                    report(onProgress, 1.0, "${DISTRO_NAMES[distro]} is already downloaded and verified")
+                    return@thread
                 }
 
-                val connection = openHttpsConnection(url, downloadedBytes)
-
-                if (connection.responseCode == 416) {
-                    connection.disconnect()
-                    targetFile.delete()
-                    throw IllegalStateException(
-                        "Resume request rejected (HTTP 416). Partial download removed."
-                    )
-                }
-
-                if (connection.responseCode == 200 && downloadedBytes > 0L) {
-                    targetFile.delete()
+                var downloadedBytes = if (archive.isFile) archive.length() else 0L
+                if (downloadedBytes > MAX_DOWNLOAD_BYTES) {
+                    deletePath(archive)
                     downloadedBytes = 0L
                 }
 
-                downloadFromConnection(
-                    connection,
-                    targetFile,
-                    distroName,
-                    downloadedBytes,
-                    onProgress
-                )
-                verifySha256(
-                    targetFile,
-                    DISTRO_SHA256[distro]
-                        ?: throw IllegalStateException("Missing SHA-256 for $distro")
-                )
+                report(onProgress, 0.02, "Connecting securely to download server...")
+                val connection = openHttpsConnection(url, downloadedBytes)
 
-                // Save distro selection
-                configFile.writeText(distro)
+                try {
+                    val responseCode = connection.responseCode
 
-                onProgress(1.0, "$distroName downloaded successfully")
-                Log.i(TAG, "Download complete: ${targetFile.absolutePath}")
+                    if (responseCode == 416) {
+                        connection.disconnect()
+                        if (archive.isFile && matchesSha256(archive, expectedSha256)) {
+                            writeAtomically(configFile, distro)
+                            report(onProgress, 1.0, "${DISTRO_NAMES[distro]} is already downloaded and verified")
+                            return@thread
+                        }
+                        deletePath(archive)
+                        throw IllegalStateException("Server rejected the resume request; the partial archive was removed")
+                    }
 
-            } catch (e: Exception) {
-                Log.e(TAG, "Download failed: ${e.message}", e)
-                onProgress(-1.0, "Download failed: ${e.message}")
+                    if (responseCode == HttpURLConnection.HTTP_OK && downloadedBytes > 0L) {
+                        if (!archive.delete()) {
+                            throw IllegalStateException("Could not restart the partial download")
+                        }
+                        downloadedBytes = 0L
+                    }
+
+                    downloadFromConnection(
+                        connection = connection,
+                        targetFile = archive,
+                        distroName = DISTRO_NAMES[distro] ?: distro,
+                        initialDownloadedBytes = downloadedBytes,
+                        onProgress = onProgress,
+                    )
+                } finally {
+                    connection.disconnect()
+                }
+
+                verifySha256(archive, expectedSha256)
+                preserveLegacyRootfsMarker()
+                writeAtomically(configFile, distro)
+
+                report(onProgress, 1.0, "${DISTRO_NAMES[distro]} downloaded and SHA-256 verified")
+                Log.i(TAG, "Verified rootfs download for $distro (${archive.length()} bytes)")
+            } catch (error: Exception) {
+                Log.e(TAG, "Rootfs download failed: ${error.message}", error)
+                report(onProgress, -1.0, "Download failed: ${error.message ?: "unknown error"}")
+            } finally {
+                operationLock.unlock()
             }
         }
     }
-    private fun openHttpsConnection(
-        rawUrl: String,
-        rangeStart: Long
-    ): HttpsURLConnection {
+
+    /** Open an HTTPS connection while validating every redirect hop. */
+    private fun openHttpsConnection(rawUrl: String, rangeStart: Long): HttpURLConnection {
+        require(rangeStart >= 0L) { "Invalid resume offset" }
         var currentUrl = URL(rawUrl)
 
         for (redirectCount in 0..5) {
-            if (
-                !currentUrl.protocol.equals("https", ignoreCase = true) ||
-                currentUrl.userInfo != null
-            ) {
-                throw SecurityException("Blocked non-HTTPS download URL")
+            validateHttpsUrl(currentUrl)
+
+            val connection = currentUrl.openConnection() as? HttpURLConnection
+                ?: throw SecurityException("HTTP connection could not be created")
+
+            if (connection !is javax.net.ssl.HttpsURLConnection) {
+                connection.disconnect()
+                throw SecurityException("HTTPS is required for rootfs downloads")
             }
 
-            val connection = currentUrl.openConnection() as? HttpsURLConnection
-                ?: throw SecurityException("HTTPS connection required")
-
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 30000
-            connection.readTimeout = 30000
+            connection.connectTimeout = NETWORK_CONNECT_TIMEOUT_MS
+            connection.readTimeout = NETWORK_READ_TIMEOUT_MS
             connection.requestMethod = "GET"
             connection.setRequestProperty("Accept-Encoding", "identity")
+            connection.setRequestProperty("User-Agent", "DroidDesk-RootfsManager")
+            connection.setRequestProperty("Connection", "close")
 
             if (rangeStart > 0L) {
                 connection.setRequestProperty("Range", "bytes=$rangeStart-")
             }
 
-            val responseCode = connection.responseCode
+            val responseCode = try {
+                connection.responseCode
+            } catch (error: Exception) {
+                connection.disconnect()
+                throw error
+            }
 
-            if (responseCode in setOf(301, 302, 303, 307, 308)) {
+            if (responseCode in REDIRECT_CODES) {
                 val location = connection.getHeaderField("Location")
                 connection.disconnect()
 
                 if (location.isNullOrBlank()) {
-                    throw SecurityException("Redirect location is missing")
+                    throw SecurityException("Download redirect did not include a location")
                 }
-
                 if (redirectCount == 5) {
                     throw SecurityException("Too many download redirects")
                 }
 
-                val redirectedUrl = URL(currentUrl, location)
-
-                if (
-                    !redirectedUrl.protocol.equals("https", ignoreCase = true) ||
-                    redirectedUrl.userInfo != null
-                ) {
-                    throw SecurityException("Blocked insecure download redirect")
-                }
-
-                currentUrl = redirectedUrl
+                currentUrl = URL(currentUrl, location)
+                validateHttpsUrl(currentUrl)
                 continue
             }
 
@@ -228,80 +281,43 @@ class RootfsManager(private val context: Context) {
 
         throw IllegalStateException("Download redirect limit exceeded")
     }
-    private fun verifySha256(file: File, expectedSha256: String) {
-        if (!file.isFile) {
-            throw IllegalStateException("Downloaded rootfs file is missing")
+
+    private fun validateHttpsUrl(url: URL) {
+        if (
+            !url.protocol.equals("https", ignoreCase = true) ||
+            url.host.isBlank() ||
+            url.userInfo != null ||
+            (url.port != -1 && url.port != 443)
+        ) {
+            throw SecurityException("Blocked unsafe rootfs download URL")
         }
+    }
 
-        if (!expectedSha256.matches(Regex("^[a-fA-F0-9]{64}$"))) {
-            throw IllegalArgumentException("Invalid expected SHA-256")
-        }
-
-        val digest = MessageDigest.getInstance("SHA-256")
-
-        file.inputStream().buffered().use { input ->
-            val buffer = ByteArray(BUFFER_SIZE)
-
-            while (true) {
-                val bytesRead = input.read(buffer)
-                if (bytesRead < 0) break
-
-                digest.update(buffer, 0, bytesRead)
-            }
-        }
-
-        val actualSha256 = digest.digest().joinToString("") {
-            "%02x".format(it.toInt() and 0xff)
-        }
-
-        if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
-            if (!file.delete()) {
-                throw SecurityException(
-                    "SHA-256 mismatch and invalid file could not be deleted"
-                )
-            }
-
-            throw SecurityException(
-                "SHA-256 verification failed. Downloaded file was removed."
-            )
-        }
-
-        Log.i(TAG, "Rootfs SHA-256 verification passed")
-        }
-
-        private fun downloadFromConnection(
+    private fun downloadFromConnection(
         connection: HttpURLConnection,
         targetFile: File,
         distroName: String,
         initialDownloadedBytes: Long,
-        onProgress: (Double, String) -> Unit
+        onProgress: (Double, String) -> Unit,
     ) {
         try {
-            fun rejectDownload(message: String): Nothing {
-                targetFile.delete()
-                throw IllegalStateException(message)
-            }
-
-            if (initialDownloadedBytes < 0L) {
-                rejectDownload("Invalid initial download size")
+            if (initialDownloadedBytes < 0L || initialDownloadedBytes > MAX_DOWNLOAD_BYTES) {
+                deletePath(targetFile)
+                throw IllegalStateException("Invalid initial download size")
             }
 
             val responseCode = connection.responseCode
-
-            if (responseCode == 416) {
-                rejectDownload("Resume request rejected (HTTP 416)")
+            if (initialDownloadedBytes > 0L && responseCode != HttpURLConnection.HTTP_PARTIAL) {
+                throw IllegalStateException("Server did not honor the download resume request (HTTP $responseCode)")
+            }
+            if (initialDownloadedBytes == 0L && responseCode != HttpURLConnection.HTTP_OK) {
+                throw IllegalStateException("Unexpected download HTTP status: $responseCode")
             }
 
-            if (initialDownloadedBytes > 0L &&
-                responseCode != HttpURLConnection.HTTP_PARTIAL
-            ) {
-                rejectDownload("Server did not honor download resume")
-            }
-
-            if (initialDownloadedBytes == 0L &&
-                responseCode != HttpURLConnection.HTTP_OK
-            ) {
-                rejectDownload("Unexpected download HTTP status: $responseCode")
+            val contentEncoding = connection.getHeaderField("Content-Encoding")
+            if (!contentEncoding.isNullOrBlank() && !contentEncoding.equals("identity", ignoreCase = true)) {
+                deletePath(targetFile)
+                throw SecurityException("Unexpected encoded response; refusing ambiguous archive length")
             }
 
             val responseLength = connection.contentLengthLong
@@ -309,49 +325,55 @@ class RootfsManager(private val context: Context) {
             var expectedTotalBytes: Long? = null
 
             if (initialDownloadedBytes > 0L) {
-                val contentRange = connection.getHeaderField("Content-Range")
-                val rangeMatch = Regex(
+                val match = Regex(
                     "^bytes ([0-9]+)-([0-9]+)/([0-9]+)$",
-                    RegexOption.IGNORE_CASE
-                ).matchEntire(contentRange?.trim().orEmpty())
-                    ?: rejectDownload("Missing or invalid Content-Range")
+                    RegexOption.IGNORE_CASE,
+                ).matchEntire(connection.getHeaderField("Content-Range")?.trim().orEmpty())
+                    ?: run {
+                        deletePath(targetFile)
+                        throw IllegalStateException("Missing or invalid Content-Range")
+                    }
 
-                val rangeStart = rangeMatch.groupValues[1].toLongOrNull()
-                    ?: rejectDownload("Invalid Content-Range start")
-
-                val rangeEnd = rangeMatch.groupValues[2].toLongOrNull()
-                    ?: rejectDownload("Invalid Content-Range end")
-
-                val rangeTotal = rangeMatch.groupValues[3].toLongOrNull()
-                    ?: rejectDownload("Invalid Content-Range total")
+                val rangeStart = match.groupValues[1].toLongOrNull()
+                val rangeEnd = match.groupValues[2].toLongOrNull()
+                val rangeTotal = match.groupValues[3].toLongOrNull()
 
                 if (
+                    rangeStart == null || rangeEnd == null || rangeTotal == null ||
                     rangeStart != initialDownloadedBytes ||
                     rangeEnd < rangeStart ||
                     rangeTotal <= rangeEnd ||
                     rangeEnd != rangeTotal - 1L
                 ) {
-                    rejectDownload("Invalid Content-Range values")
+                    deletePath(targetFile)
+                    throw IllegalStateException("Invalid Content-Range values")
                 }
 
-                if (responseLength >= 0L) {
-                    expectedResponseBytes = rangeEnd - rangeStart + 1L
-
-                    if (responseLength != expectedResponseBytes) {
-                        rejectDownload("Content-Length does not match Content-Range")
-                    }
-                }
-
+                expectedResponseBytes = rangeEnd - rangeStart + 1L
                 expectedTotalBytes = rangeTotal
+
+                if (responseLength >= 0L && responseLength != expectedResponseBytes) {
+                    deletePath(targetFile)
+                    throw IllegalStateException("Content-Length does not match Content-Range")
+                }
             } else {
                 if (responseLength == 0L) {
-                    rejectDownload("Server returned an empty download")
+                    deletePath(targetFile)
+                    throw IllegalStateException("Server returned an empty archive")
                 }
-
                 if (responseLength > 0L) {
                     expectedResponseBytes = responseLength
                     expectedTotalBytes = responseLength
                 }
+            }
+
+            if (
+                responseLength > MAX_DOWNLOAD_BYTES ||
+                (expectedTotalBytes != null && expectedTotalBytes > MAX_DOWNLOAD_BYTES) ||
+                initialDownloadedBytes > MAX_DOWNLOAD_BYTES - (expectedResponseBytes ?: 0L)
+            ) {
+                deletePath(targetFile)
+                throw IllegalStateException("Rootfs archive exceeds the configured download size limit")
             }
 
             var downloadedBytes = initialDownloadedBytes
@@ -359,10 +381,7 @@ class RootfsManager(private val context: Context) {
             val buffer = ByteArray(BUFFER_SIZE)
 
             connection.inputStream.use { input ->
-                FileOutputStream(
-                    targetFile,
-                    initialDownloadedBytes > 0L
-                ).use { output ->
+                FileOutputStream(targetFile, initialDownloadedBytes > 0L).use { output ->
                     while (true) {
                         val bytesRead = input.read(buffer)
                         if (bytesRead < 0) break
@@ -370,343 +389,591 @@ class RootfsManager(private val context: Context) {
 
                         val expected = expectedResponseBytes
                         if (
-                            expected != null &&
-                            receivedBytes > expected - bytesRead
+                            downloadedBytes > MAX_DOWNLOAD_BYTES - bytesRead ||
+                            (expected != null && receivedBytes > expected - bytesRead)
                         ) {
-                            rejectDownload("Server sent more data than expected")
+                            deletePath(targetFile)
+                            throw IllegalStateException("Server sent more data than expected")
                         }
 
                         output.write(buffer, 0, bytesRead)
-
                         receivedBytes += bytesRead
                         downloadedBytes += bytesRead
 
                         val total = expectedTotalBytes
                         if (total != null && total > 0L) {
-                            val progress =
-                                downloadedBytes.toDouble() / total
-                            val downloadedMB =
-                                downloadedBytes / (1024 * 1024)
-                            val totalMB = total / (1024 * 1024)
-
-                            onProgress(
+                            val progress = (downloadedBytes.toDouble() / total.toDouble()).coerceIn(0.0, 0.99)
+                            val downloadedMb = downloadedBytes / (1024L * 1024L)
+                            val totalMb = total / (1024L * 1024L)
+                            report(
+                                onProgress,
                                 progress,
-                                "Downloading $distroName: ${downloadedMB}MB / ${totalMB}MB"
+                                "Downloading $distroName: ${downloadedMb} MB / ${totalMb} MB",
                             )
+                        } else {
+                            report(onProgress, 0.5, "Downloading $distroName: ${downloadedBytes / (1024L * 1024L)} MB")
                         }
                     }
                 }
             }
 
-            if (
-                expectedResponseBytes != null &&
-                receivedBytes != expectedResponseBytes
-            ) {
-                rejectDownload("Received data size does not match expected response size")
+            if (expectedResponseBytes != null && receivedBytes != expectedResponseBytes) {
+                deletePath(targetFile)
+                throw IllegalStateException("Downloaded byte count does not match the server response")
             }
-
-            if (
-                expectedTotalBytes != null &&
-                downloadedBytes != expectedTotalBytes
-            ) {
-                rejectDownload("Total download size does not match Content-Range")
+            if (expectedTotalBytes != null && downloadedBytes != expectedTotalBytes) {
+                deletePath(targetFile)
+                throw IllegalStateException("Total downloaded size does not match Content-Range")
+            }
+            if (!targetFile.isFile || targetFile.length() <= 0L) {
+                deletePath(targetFile)
+                throw IllegalStateException("Downloaded archive is empty")
             }
         } finally {
             connection.disconnect()
         }
     }
 
-    // ── Extraction ──
+    private fun verifySha256(file: File, expectedSha256: String) {
+        if (!file.isFile || Files.isSymbolicLink(file.toPath())) {
+            throw IllegalStateException("Rootfs archive is missing or is not a regular file")
+        }
+        if (!expectedSha256.matches(Regex("^[a-fA-F0-9]{64}$"))) {
+            throw IllegalArgumentException("Configured SHA-256 is invalid")
+        }
 
-    /**
-     * Extract the downloaded rootfs tarball.
-     * Uses the system's tar command (available on Android via toybox).
-     */
-    fun extractRootfs(
-        onProgress: (progress: Double, status: String) -> Unit
-    ) {
+        val actual = sha256(file)
+        if (!actual.equals(expectedSha256, ignoreCase = true)) {
+            runCatching { Files.deleteIfExists(file.toPath()) }
+            throw SecurityException("Rootfs SHA-256 verification failed; the archive was removed")
+        }
+        Log.i(TAG, "Rootfs SHA-256 verification passed")
+    }
+
+    private fun matchesSha256(file: File, expectedSha256: String): Boolean {
+        if (!file.isFile || Files.isSymbolicLink(file.toPath())) return false
+        return runCatching { sha256(file).equals(expectedSha256, ignoreCase = true) }
+            .getOrDefault(false)
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (count > 0) digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    // -------------------------------------------------------------------------
+    // Extraction
+    // -------------------------------------------------------------------------
+
+    /** Verifies and extracts the selected archive, preserving the old rootfs on failure. */
+    fun extractRootfs(onProgress: (progress: Double, status: String) -> Unit) {
         thread(name = "rootfs-extract") {
+            if (!operationLock.tryLock()) {
+                report(onProgress, -1.0, "Another rootfs operation is already running")
+                return@thread
+            }
+
+            var extractionSucceeded = false
             try {
                 val distro = getInstalledDistro()
+                if (distro !in DISTRO_URLS.keys) {
+                    throw IllegalStateException("No supported distribution is selected")
+                }
+
                 val expectedSha256 = DISTRO_SHA256[distro]
-                    ?: throw IllegalStateException("Unknown or unsupported distro")
+                    ?: throw IllegalStateException("SHA-256 is not configured for $distro")
+                val archive = archiveFile(distro)
 
-                val extension = if (distro == "kali") "xz" else "gz"
-                val tarball = File(downloadDir, "$distro-rootfs.tar.$extension")
+                ensureDownloadDirectory()
+                ensureManagedFile(archive, downloadDir)
+                if (!archive.isFile || archive.length() <= 0L || archive.length() > MAX_DOWNLOAD_BYTES) {
+                    throw IllegalStateException("Rootfs archive is missing, empty, or too large. Download it again")
+                }
 
+                report(onProgress, 0.05, "Verifying rootfs archive...")
+                verifySha256(archive, expectedSha256)
+
+                ensureSafeManagedDirectory(stagingRootfsDir)
+                ensureSafeManagedDirectory(backupRootfsDir)
+                deletePath(stagingRootfsDir)
+                if (!stagingRootfsDir.mkdirs()) {
+                    throw IllegalStateException("Could not create temporary extraction directory")
+                }
+
+                val listingLog = File(context.cacheDir, "rootfs-archive-list.txt")
+                val extractionLog = File(context.cacheDir, "rootfs-extract.log")
+                val xzArchive = archive.extension.equals("xz", ignoreCase = true)
+
+                report(onProgress, 0.12, "Checking archive entries...")
+                val listFlags = if (xzArchive) "tJf" else "tzf"
+                val listExit = runLoggedProcess(
+                    listOf("tar", listFlags, archive.absolutePath),
+                    listingLog,
+                    20L,
+                )
+                if (listExit != 0) {
+                    throw IllegalStateException("Archive listing failed: ${readLogTail(listingLog)}")
+                }
+                validateArchiveListing(listingLog)
+
+                report(onProgress, 0.2, "Extracting ${DISTRO_NAMES[distro]}...")
+                val extractFlags = if (xzArchive) "Jxf" else "zxf"
+                val extractExit = runLoggedProcess(
+                    listOf("tar", extractFlags, archive.absolutePath, "-C", stagingRootfsDir.absolutePath),
+                    extractionLog,
+                    ARCHIVE_PROCESS_TIMEOUT_MINUTES,
+                )
+                if (extractExit != 0) {
+                    throw IllegalStateException("tar extraction failed (exit $extractExit): ${readLogTail(extractionLog)}")
+                }
+
+                report(onProgress, 0.78, "Checking extracted Linux system...")
+                if (!validateRootfsTree(stagingRootfsDir, distro)) {
+                    throw IllegalStateException("Extracted archive is incomplete or is not a valid $distro rootfs")
+                }
+
+                report(onProgress, 0.84, "Configuring Linux environment...")
+                configureRootfs(stagingRootfsDir, distro)
+
+                if (!validateRootfsTree(stagingRootfsDir, distro)) {
+                    throw IllegalStateException("Rootfs validation failed after configuration")
+                }
+
+                report(onProgress, 0.92, "Activating the verified rootfs...")
+                replaceRootfsAtomically(distro)
+                extractionSucceeded = true
+
+                if (!archive.delete()) {
+                    Log.w(TAG, "Verified rootfs archive could not be removed after extraction")
+                }
+
+                listingLog.delete()
+                extractionLog.delete()
+                report(onProgress, 1.0, "${DISTRO_NAMES[distro]} setup complete")
+                Log.i(TAG, "Rootfs extraction completed for $distro (${getRootfsSizeMB()} MB)")
+            } catch (error: Exception) {
+                Log.e(TAG, "Rootfs extraction failed: ${error.message}", error)
+                report(onProgress, -1.0, "Extraction failed: ${error.message ?: "unknown error"}")
+            } finally {
+                if (!extractionSucceeded) {
+                    runCatching { deletePath(stagingRootfsDir) }
+                }
+                operationLock.unlock()
+            }
+        }
+    }
+
+    /** Reject absolute paths, parent traversal and abnormal archive entry names. */
+    private fun validateArchiveListing(listingFile: File) {
+        if (!listingFile.isFile) throw SecurityException("Archive listing was not created")
+        if (listingFile.length() > 128L * 1024L * 1024L) {
+            throw SecurityException("Archive contains an excessively large file listing")
+        }
+
+        var count = 0
+        listingFile.bufferedReader().useLines { lines ->
+            lines.forEach { rawLine ->
+                val name = rawLine.removeSuffix("\r")
+                if (name.isEmpty()) return@forEach
+
+                count++
+                if (count > MAX_ARCHIVE_ENTRIES) {
+                    throw SecurityException("Archive contains too many entries")
+                }
                 if (
-                    !tarball.isFile ||
-                    java.nio.file.Files.isSymbolicLink(tarball.toPath())
+                    name.startsWith("/") ||
+                    Regex("^[A-Za-z]:").containsMatchIn(name) ||
+                    name.contains('\\') ||
+                    name.any { it.isISOControl() }
                 ) {
-                    onProgress(-1.0, "Rootfs tarball is missing or invalid. Download first.")
-                    return@thread
+                    throw SecurityException("Blocked unsafe archive entry")
                 }
 
-                if (tarball.canonicalFile.parentFile != downloadDir.canonicalFile) {
-                    throw SecurityException("Rootfs archive is outside download directory")
+                val segments = name.split('/')
+                if (segments.any { it == ".." }) {
+                    throw SecurityException("Blocked archive path traversal")
                 }
+            }
+        }
+        if (count == 0) throw SecurityException("Archive contains no entries")
+    }
 
-                verifySha256(tarball, expectedSha256)
+    private fun runLoggedProcess(command: List<String>, outputFile: File, timeoutMinutes: Long): Int {
+        outputFile.parentFile?.let {
+            if (!it.exists() && !it.mkdirs()) throw IllegalStateException("Could not create process log directory")
+        }
+        if (outputFile.exists() && !outputFile.delete()) {
+            throw IllegalStateException("Could not clear previous process log")
+        }
 
-                val setupMarker = File(context.filesDir, "SETUP_COMPLETE")
-                if (setupMarker.exists() && !setupMarker.delete()) {
-                    throw IllegalStateException("Could not clear previous setup marker")
-                }
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .redirectOutput(outputFile)
+            .start()
 
-                if (rootfsDir.exists() && !rootfsDir.deleteRecursively()) {
-                    throw IllegalStateException("Could not remove previous rootfs")
-                }
+        if (!process.waitFor(timeoutMinutes, TimeUnit.MINUTES)) {
+            process.destroy()
+            if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
+            throw IllegalStateException("Archive process timed out")
+        }
+        return process.exitValue()
+    }
 
-                if (!rootfsDir.mkdirs() && !rootfsDir.isDirectory) {
-                    throw IllegalStateException("Could not create rootfs directory")
-                }
+    private fun readLogTail(file: File): String {
+        if (!file.isFile) return "no diagnostic output"
+        return runCatching {
+            RandomAccessFile(file, "r").use { input ->
+                val start = (input.length() - MAX_LOG_TAIL_BYTES).coerceAtLeast(0L)
+                input.seek(start)
+                val bytes = ByteArray((input.length() - start).toInt())
+                input.readFully(bytes)
+                String(bytes, Charsets.UTF_8).trim().takeLast(MAX_LOG_TAIL_BYTES.toInt())
+            }
+        }.getOrDefault("could not read process log")
+    }
 
-                onProgress(0.1, "Extracting ${DISTRO_NAMES[distro]}...")
+    private fun validateRootfsTree(root: File, distro: String): Boolean {
+        if (!root.isDirectory || Files.isSymbolicLink(root.toPath())) return false
 
-                // Use ProcessBuilder to run tar extraction
-                // Android's toybox includes tar, and we can use xz if available
-                val ext = if (distro == "kali") "xz" else "gz"
-                val tarFlags = if (ext == "xz") "Jxf" else "zxf"
-                val process = ProcessBuilder(
-                    "tar", tarFlags, tarball.absolutePath,
-                    "-C", rootfsDir.absolutePath
-                )
-                    .redirectErrorStream(true)
-                    .start()
+        val etc = File(root, "etc")
+        val usr = File(root, "usr")
+        if (!etc.isDirectory || !usr.isDirectory) return false
 
-                // Read output for progress indication
-                val reader = process.inputStream.bufferedReader()
-                var line: String?
-                var lineCount = 0
-                var lastLine = ""
-                while (reader.readLine().also { line = it } != null) {
-                    lastLine = line!!
-                    if (lineCount % 500 == 0) {
-                        onProgress(0.1 + (lineCount % 5000) / 10000.0, "Extracting: $line")
-                    }
-                    lineCount++
-                }
+        val osRelease = File(etc, "os-release").isFile || File(usr, "lib/os-release").isFile
+        if (!osRelease) return false
 
-                val exitCode = process.waitFor()
-                val binDir = File(rootfsDir, "bin")
-                
-                // Android's tar will fail (code 1 or 2) when trying to chown files to root or create /dev nodes.
-                // We ignore this as long as the core filesystem extracted successfully.
-                                if (exitCode != 0) {
-                    val hasCoreFilesystem =
-                        File(rootfsDir, "bin").let { it.exists() && it.list()?.isNotEmpty() == true } &&
-                        File(rootfsDir, "usr").isDirectory &&
-                        File(rootfsDir, "etc").isDirectory
+        val shellExists = if (distro == "alpine") {
+            File(root, "bin/sh").isFile
+        } else {
+            File(root, "bin/bash").isFile || File(root, "usr/bin/bash").isFile
+        }
+        if (!shellExists) return false
 
-                    if (!hasCoreFilesystem) {
-                        throw RuntimeException("tar failed (code $exitCode): $lastLine")
-                    }
+        val packageManagerExists = when (distro) {
+            "alpine" -> File(root, "sbin/apk").isFile || File(root, "usr/sbin/apk").isFile
+            "ubuntu", "kali" -> File(root, "usr/bin/dpkg").isFile || File(root, "bin/dpkg").isFile
+            else -> false
+        }
+        return packageManagerExists
+    }
 
-                    Log.w(TAG, "tar reported extraction warnings; core directories exist")
-                }
+    /** Replace an existing rootfs only after the staged one passes all checks. */
+    private fun replaceRootfsAtomically(distro: String) {
+        val oldMarker = readPrivateText(setupMarker)
+        var oldRootfsMoved = false
+        var newRootfsMoved = false
 
-                onProgress(0.7, "Configuring Linux environment...")
+        ensureSafeManagedDirectory(rootfsDir)
+        ensureSafeManagedDirectory(backupRootfsDir)
+        deletePath(backupRootfsDir)
 
-                // Post-extraction configuration
-                configureRootfs()
+        try {
+            if (rootfsDir.exists()) {
+                movePath(rootfsDir, backupRootfsDir)
+                oldRootfsMoved = true
+            }
 
-                // Mark setup as completely successful
-                File(context.filesDir, "SETUP_COMPLETE").writeText("done")
+            movePath(stagingRootfsDir, rootfsDir)
+            newRootfsMoved = true
 
-                // Clean up tarball to save space
-                tarball.delete()
+            writeAtomically(setupMarker, distro)
 
-                onProgress(1.0, "${DISTRO_NAMES[distro] ?: distro} setup complete")
-                Log.i(TAG, "Rootfs extraction complete. Size: ${getRootfsSizeMB()} MB")
+            if (oldRootfsMoved) {
+                runCatching { deletePath(backupRootfsDir) }
+                    .onFailure { Log.w(TAG, "Old rootfs backup could not be removed", it) }
+            }
+        } catch (error: Exception) {
+            if (newRootfsMoved) runCatching { deletePath(rootfsDir) }
+            if (oldRootfsMoved && backupRootfsDir.exists()) {
+                runCatching { movePath(backupRootfsDir, rootfsDir) }
+                    .onFailure { Log.e(TAG, "Could not restore previous rootfs", it) }
+            }
+            runCatching {
+                if (oldMarker.isNotEmpty()) writeAtomically(setupMarker, oldMarker)
+                else deletePath(setupMarker)
+            }
+            throw error
+        }
+    }
 
-            } catch (e: Exception) {
-                Log.e(TAG, "Extraction failed: ${e.message}", e)
-                onProgress(-1.0, "Extraction failed: ${e.message}")
+    private fun movePath(source: File, destination: File) {
+        if (!source.exists()) throw IllegalStateException("Move source does not exist")
+        if (destination.exists() || Files.isSymbolicLink(destination.toPath())) {
+            throw IllegalStateException("Move destination already exists")
+        }
+        try {
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            if (!source.renameTo(destination)) {
+                throw IllegalStateException("Could not move ${source.name} into place")
             }
         }
     }
 
-    // ── Post-install Configuration ──
-    /**
-     * Configure the extracted rootfs with essential settings.
-     * Sets up user, sudo, apt sources, DNS, and environment.
-     */
-    private fun configureRootfs() {
-        Log.i(TAG, "Configuring rootfs...")
+    // -------------------------------------------------------------------------
+    // Rootfs configuration
+    // -------------------------------------------------------------------------
 
-        // DNS resolution
-        File(rootfsDir, "etc/resolv.conf").apply {
-            parentFile?.mkdirs()
-            writeText("""
-                nameserver 8.8.8.8
-                nameserver 8.8.4.4
-                nameserver 1.1.1.1
-            """.trimIndent())
+    private fun configureRootfs(root: File, distro: String) {
+        ensureRootfsDirectory(root, "etc")
+        ensureRootfsDirectory(root, "etc/profile.d")
+        ensureRootfsDirectory(root, "tmp")
+        ensureRootfsDirectory(root, "tmp/runtime-root")
+        ensureRootfsDirectory(root, "run")
+        ensureRootfsDirectory(root, "dev/shm")
+
+        writeRootfsFile(
+            root,
+            "etc/resolv.conf",
+            "nameserver 8.8.8.8\nnameserver 8.8.4.4\nnameserver 1.1.1.1\n",
+            replaceSymlink = true,
+        )
+        writeRootfsFile(root, "etc/hostname", "droiddesk\n", replaceSymlink = true)
+        writeRootfsFile(
+            root,
+            "etc/hosts",
+            "127.0.0.1 localhost\n127.0.0.1 droiddesk\n::1 localhost ip6-localhost ip6-loopback\n",
+            replaceSymlink = true,
+        )
+
+        // Alpine uses apk and has no APT configuration directory.
+        if (distro != "alpine") {
+            ensureRootfsDirectory(root, "etc/apt/apt.conf.d")
+            writeRootfsFile(
+                root,
+                "etc/apt/apt.conf.d/99-disable-sandbox",
+                "APT::Sandbox::User \"root\";\n",
+                replaceSymlink = true,
+            )
         }
 
-        // Disable apt sandbox (CRITICAL for Android)
-        // If apt drops to the _apt user, it loses the Android 'inet' group and hangs indefinitely without network access.
-        val aptConfDir = File(rootfsDir, "etc/apt/apt.conf.d")
-        aptConfDir.mkdirs()
-        File(aptConfDir, "99-disable-sandbox").writeText("APT::Sandbox::User \"root\";\n")
+        // Keep this profile portable; graphics drivers are selected by the
+        // active runtime, not forced globally during rootfs extraction.
+        val profile = """
+            #!/bin/sh
+            export DISPLAY="${'$'}{DISPLAY:-:0}"
+            export PULSE_SERVER="${'$'}{PULSE_SERVER:-127.0.0.1}"
+            export XDG_RUNTIME_DIR="${'$'}{XDG_RUNTIME_DIR:-/tmp/runtime-root}"
+            export NO_AT_BRIDGE=1
+            export GTK_A11Y=none
+            export LANG="${'$'}{LANG:-C.UTF-8}"
+        """.trimIndent() + "\n"
+        writeRootfsFile(root, "etc/profile.d/droiddesk.sh", profile, replaceSymlink = true)
 
-        // Hostname
-        File(rootfsDir, "etc/hostname").writeText("droiddesk\n")
-
-        // Hosts file
-        File(rootfsDir, "etc/hosts").apply {
-            parentFile?.mkdirs()
-            writeText("""
-                127.0.0.1   localhost
-                127.0.0.1   droiddesk
-                ::1         localhost ip6-localhost ip6-loopback
-            """.trimIndent())
-        }
-
-        // Environment variables for the Linux session
-        File(rootfsDir, "etc/profile.d/droiddesk.sh").apply {
-            parentFile?.mkdirs()
-            writeText("""
-                #!/bin/bash
-                # DroidDesk environment configuration
-                export DISPLAY=:0
-                export PULSE_SERVER=127.0.0.1
-                export MESA_NO_ERROR=1
-                export MESA_GL_VERSION_OVERRIDE=4.6
-                export MESA_GLES_VERSION_OVERRIDE=3.2
-                export GALLIUM_DRIVER=zink
-                export MESA_LOADER_DRIVER_OVERRIDE=zink
-                export TU_DEBUG=noconform
-                export ZINK_DESCRIPTORS=lazy
-                export MESA_VK_WSI_PRESENT_MODE=immediate
-                
-                # XDG directories
-                export XDG_RUNTIME_DIR=/tmp/runtime-root
-                mkdir -p "${'$'}XDG_RUNTIME_DIR" 2>/dev/null
-                
-                # Color prompt
-                export PS1='\[\033[01;32m\]droiddesk\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-                
-                alias ll='ls -la --color=auto'
-                alias update='apt update && apt upgrade -y'
-            """.trimIndent())
-        }
-
-        // Sudo configuration (passwordless for root)
-        File(rootfsDir, "etc/sudoers.d/droiddesk").apply {
-            parentFile?.mkdirs()
-            writeText("""
-                Defaults !requiretty
-                root ALL=(ALL) NOPASSWD: ALL
-            """.trimIndent())
-        }
-
-        // Create required directories
-        listOf(
-            "tmp",
-            "tmp/runtime-root",
-            "run",
-            "var/run",
-            "dev/shm"
-        ).forEach {
-            File(rootfsDir, it).mkdirs()
-        }
-
-        Log.i(TAG, "Rootfs configuration complete")
+        Log.i(TAG, "Rootfs configuration completed for $distro")
     }
 
-    // ── Desktop Environment Installation ──
+    private fun ensureRootfsDirectory(root: File, relativePath: String) {
+        val directory = File(root, relativePath)
+        val parent = directory.parentFile
+            ?: throw IllegalStateException("Rootfs directory has no parent: $relativePath")
 
-    /**
-     * Install a desktop environment inside the rootfs using apt.
-     * Called after rootfs extraction.
-     */
-    fun installDesktopEnvironment(
-        de: String,
-        runtime: LinuxRuntime,
-        onProgress: (Double, String) -> Unit,
-        onLog: (String) -> Unit
+        // Check the parent before mkdirs(), because mkdirs() follows symlinked
+        // parents. A standard rootfs may contain links such as /var/run -> /run;
+        // for the small set of directories DroidDesk manages, replace the link
+        // itself with a real directory instead of following its target.
+        if (!isInsideRoot(root, parent.canonicalFile)) {
+            throw SecurityException("Rootfs parent escapes extraction root: $relativePath")
+        }
+        if (Files.isSymbolicLink(directory.toPath())) {
+            Files.delete(directory.toPath())
+        }
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IllegalStateException("Could not create rootfs directory: $relativePath")
+        }
+        if (!directory.isDirectory || !isInsideRoot(root, directory.canonicalFile)) {
+            throw SecurityException("Unsafe rootfs directory: $relativePath")
+        }
+    }
+
+    private fun writeRootfsFile(
+        root: File,
+        relativePath: String,
+        contents: String,
+        replaceSymlink: Boolean = false,
     ) {
-        thread(name = "de-install") {
-            try {
-                // Forcefully release any stuck apt locks before starting
-                onProgress(0.0, "Clearing package manager locks...")
-                try {
-                    runtime.executeCommand("""
-                        killall -9 apt apt-get dpkg 2>/dev/null || true
-                        rm -f /var/lib/apt/lists/lock
-                        rm -f /var/cache/apt/archives/lock
-                        rm -f /var/lib/dpkg/lock*
-                        dpkg --configure -a
-                    """.trimIndent(), onLog)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Lock clearing failed, continuing anyway: ${e.message}")
-                }
-                
-                onProgress(0.0, "Updating package lists...")
-                runtime.executeCommand("apt-get update -y", onLog)
-                
-                // Pre-configure Firefox PPA to fix Ubuntu snap issue
-                onProgress(0.1, "Configuring repositories...")
-                runtime.executeCommand("""
-                    DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y software-properties-common wget gpg
-                    add-apt-repository ppa:mozillateam/ppa -y
-                    echo "Package: *" > /etc/apt/preferences.d/mozilla-firefox
-                    echo "Pin: release o=LP-PPA-mozillateam" >> /etc/apt/preferences.d/mozilla-firefox
-                    echo "Pin-Priority: 1001" >> /etc/apt/preferences.d/mozilla-firefox
-                    
-                    # Add Microsoft repository for VS Code
-                    mkdir -p /etc/apt/keyrings
-                    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-                    install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-                    echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list
-                    rm -f packages.microsoft.gpg
-                    
-                    apt-get update -y
-                """.trimIndent(), onLog)
+        val file = File(root, relativePath)
+        val parent = file.parentFile ?: throw IllegalStateException("Rootfs file has no parent")
+        ensureRootfsDirectory(root, parent.relativeTo(root).invariantSeparatorsPath)
 
-                var packages = when (de) {
-                    "xfce4" -> "xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar mousepad devilspie2 dbus-x11 xclip"
-                    "lxqt" -> "lxqt qterminal pcmanfm-qt featherpad dbus-x11"
-                    "mate" -> "mate-desktop-environment mate-terminal dbus-x11"
-                    "kde" -> "plasma-desktop konsole dolphin dbus-x11"
-                    else -> "xfce4 xfce4-terminal dbus-x11"
-                }
-                
-                // Fix broken dependencies from interrupted apt installs
-                runtime.executeCommand("DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -f -y", onLog)
+        if (Files.isSymbolicLink(file.toPath())) {
+            if (!replaceSymlink) throw SecurityException("Refusing to write through a rootfs symlink: $relativePath")
+            Files.delete(file.toPath())
+        }
+        if (file.isDirectory) throw IllegalStateException("Rootfs file path is a directory: $relativePath")
+        if (!isInsideRoot(root, file.canonicalFile)) {
+            throw SecurityException("Rootfs file path escapes extraction root: $relativePath")
+        }
 
-                onProgress(0.2, "Installing $de packages...")
-                runtime.executeCommand(
-                    "DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends $packages", onLog
-                )
+        file.writeText(contents, Charsets.UTF_8)
+    }
 
-                onProgress(0.8, "Installing core utilities...")
-                val result = runtime.executeCommand(
-                    "DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends " +
-                    "git wget curl python3 python3-pip htop nano sudo libgl1 x11-xserver-utils", onLog
-                )
+    private fun isInsideRoot(root: File, candidate: File): Boolean {
+        val rootPath = root.canonicalPath
+        val candidatePath = candidate.canonicalPath
+        return candidatePath == rootPath || candidatePath.startsWith(rootPath + File.separator)
+    }
 
-                onProgress(0.9, "Configuring embedded X11 display...")
-                
-                if (result.contains("E: ")) {
-                    throw Exception("Apt-get failed: Check terminal output.")
-                }
+    // -------------------------------------------------------------------------
+    // Legacy desktop installer compatibility
+    // -------------------------------------------------------------------------
 
-                deConfigFile.writeText(de)
-                onProgress(1.0, "$de installation complete!")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "DE installation failed: ${e.message}", e)
-                onProgress(-1.0, "Installation failed: ${e.message}")
-            }
+    /**
+     * This old overload received LinuxRuntime, which executes in the native
+     * Termux prefix, not inside this rootfs. Running apt commands through it
+     * could modify the wrong environment. Keep the signature for compatibility
+     * and direct callers to ChrootRuntime, which owns the actual chroot session.
+     */
+    @Deprecated("Use ChrootRuntime.installDesktopEnvironment for a rooted rootfs")
+    fun installDesktopEnvironment(
+        @Suppress("UNUSED_PARAMETER") de: String,
+        @Suppress("UNUSED_PARAMETER") runtime: LinuxRuntime,
+        onProgress: (Double, String) -> Unit,
+        onLog: (String) -> Unit,
+    ) {
+        thread(name = "rootfs-de-install-unsupported") {
+            val message = "Desktop installation must be run through ChrootRuntime, not the native LinuxRuntime"
+            Log.w(TAG, message)
+            runCatching { onLog(message) }
+            report(onProgress, -1.0, message)
         }
     }
 
-    // ── Utility ──
+    // -------------------------------------------------------------------------
+    // Filesystem and metadata helpers
+    // -------------------------------------------------------------------------
 
-    private fun calculateDirSize(dir: File): Long {
-        if (!dir.exists()) return 0
-        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    private fun archiveFile(distro: String): File {
+        val extension = if (distro == "kali") "xz" else "gz"
+        return File(downloadDir, "$distro-rootfs.tar.$extension")
     }
+
+    private fun ensureDownloadDirectory() {
+        if (!downloadDir.exists() && !downloadDir.mkdirs()) {
+            throw IllegalStateException("Could not create rootfs download directory")
+        }
+        if (!downloadDir.isDirectory || Files.isSymbolicLink(downloadDir.toPath())) {
+            throw SecurityException("Rootfs download path is not a private directory")
+        }
+        if (downloadDir.canonicalFile.parentFile != baseDir.canonicalFile) {
+            throw SecurityException("Rootfs download directory escaped app storage")
+        }
+    }
+
+    private fun ensureManagedFile(file: File, parent: File) {
+        if (Files.isSymbolicLink(file.toPath())) {
+            throw SecurityException("Refusing a symbolic link in the rootfs download path")
+        }
+        if (file.exists() && !file.isFile) {
+            throw SecurityException("Rootfs download target is not a regular file")
+        }
+        if (file.canonicalFile.parentFile != parent.canonicalFile) {
+            throw SecurityException("Rootfs download target escaped its directory")
+        }
+    }
+
+    private fun ensureSafeManagedDirectory(file: File) {
+        if (Files.isSymbolicLink(file.toPath())) {
+            throw SecurityException("Refusing a symbolic link for ${file.name}")
+        }
+        if (file.exists() && !file.isDirectory) {
+            throw SecurityException("Managed rootfs path is not a directory: ${file.name}")
+        }
+        if (file.canonicalFile.parentFile != baseDir.canonicalFile) {
+            throw SecurityException("Managed rootfs directory escaped app storage")
+        }
+    }
+
+    private fun preserveLegacyRootfsMarker() {
+        if (readPrivateText(setupMarker) != "done") return
+        val previousDistro = readPrivateText(configFile)
+        if (previousDistro in DISTRO_URLS.keys) {
+            writeAtomically(setupMarker, previousDistro)
+        }
+    }
+
+    private fun readPrivateText(file: File): String {
+        return runCatching {
+            if (!file.isFile || Files.isSymbolicLink(file.toPath())) return@runCatching ""
+            if (file.canonicalFile.parentFile != baseDir.canonicalFile) return@runCatching ""
+            file.readText(Charsets.UTF_8).trim()
+        }.getOrDefault("")
+    }
+
+    private fun writeAtomically(file: File, contents: String) {
+        val parent = file.parentFile ?: throw IllegalStateException("Metadata file has no parent")
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IllegalStateException("Could not create metadata directory")
+        }
+        if (parent.canonicalFile != baseDir.canonicalFile) {
+            throw SecurityException("Metadata path is outside app storage")
+        }
+
+        val temporary = File(parent, ".${file.name}.tmp-${System.currentTimeMillis()}-${Thread.currentThread().hashCode()}")
+        if (temporary.exists()) deletePath(temporary)
+        FileOutputStream(temporary).use { output ->
+            output.write(contents.toByteArray(Charsets.UTF_8))
+            output.flush()
+            output.fd.sync()
+        }
+
+        try {
+            Files.move(
+                temporary.toPath(),
+                file.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private fun deletePath(file: File) {
+        if (Files.isSymbolicLink(file.toPath())) {
+            Files.deleteIfExists(file.toPath())
+            return
+        }
+        if (file.exists() && !file.deleteRecursively()) {
+            throw IllegalStateException("Could not remove ${file.name}")
+        }
+    }
+
+    private fun calculateDirSize(directory: File): Long {
+        if (!directory.isDirectory) return 0L
+        var total = 0L
+        directory.walkTopDown().forEach { entry ->
+            if (entry.isFile && !Files.isSymbolicLink(entry.toPath())) {
+                val length = entry.length()
+                if (Long.MAX_VALUE - total < length) return Long.MAX_VALUE
+                total += length
+            }
+        }
+        return total
+    }
+
+    private fun report(
+        callback: (Double, String) -> Unit,
+        progress: Double,
+        message: String,
+    ) {
+        runCatching { callback(progress, message) }
+            .onFailure { Log.w(TAG, "Progress callback failed", it) }
+    }
+
+    private val REDIRECT_CODES = setOf(
+        HttpURLConnection.HTTP_MOVED_PERM,
+        HttpURLConnection.HTTP_MOVED_TEMP,
+        HttpURLConnection.HTTP_SEE_OTHER,
+        307,
+        308,
+    )
 }
