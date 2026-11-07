@@ -123,45 +123,34 @@ class RootfsManager(private val context: Context) {
                 onProgress(0.0, "Connecting to download server...")
                 Log.i(TAG, "Downloading $distroName from $url")
 
-                val connection = URL(url).openConnection() as HttpURLConnection
-                connection.connectTimeout = 30000
-                connection.readTimeout = 30000
-                
                 var downloadedBytes = 0L
+
                 if (targetFile.exists()) {
                     downloadedBytes = targetFile.length()
-                    connection.setRequestProperty("Range", "bytes=$downloadedBytes-")
                 }
-                
-                connection.requestMethod = "GET"
 
-                // Handle redirects or Already Satisfied (416)
-                                if (connection.responseCode == 416) {
+                val connection = openHttpsConnection(url, downloadedBytes)
+
+                if (connection.responseCode == 416) {
                     connection.disconnect()
                     targetFile.delete()
                     throw IllegalStateException(
-                        "Resume request rejected (HTTP 416). Partial download removed; retry from the beginning."
+                        "Resume request rejected (HTTP 416). Partial download removed."
                     )
                 }
 
-                if (connection.responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
-                    connection.responseCode == HttpURLConnection.HTTP_MOVED_PERM ||
-                    connection.responseCode == HttpURLConnection.HTTP_SEE_OTHER) {
-                    val redirectUrl = connection.getHeaderField("Location")
-                    connection.disconnect()
-                    val newConnection = URL(redirectUrl).openConnection() as HttpURLConnection
-                    if (downloadedBytes > 0) {
-                        newConnection.setRequestProperty("Range", "bytes=$downloadedBytes-")
-                    }
-                    downloadFromConnection(newConnection, targetFile, distroName, downloadedBytes, onProgress)
-                } else {
-                    // If server ignored Range header (returned 200 instead of 206), we must restart
-                    if (connection.responseCode == 200 && downloadedBytes > 0) {
-                        targetFile.delete()
-                        downloadedBytes = 0L
-                    }
-                    downloadFromConnection(connection, targetFile, distroName, downloadedBytes, onProgress)
+                if (connection.responseCode == 200 && downloadedBytes > 0L) {
+                    targetFile.delete()
+                    downloadedBytes = 0L
                 }
+
+                downloadFromConnection(
+                    connection,
+                    targetFile,
+                    distroName,
+                    downloadedBytes,
+                    onProgress
+                )
                 verifySha256(
                     targetFile,
                     DISTRO_SHA256[distro]
