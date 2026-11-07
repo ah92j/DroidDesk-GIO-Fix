@@ -455,6 +455,8 @@ class HomeScreen extends StatelessWidget {
     switch (distro) {
       case 'ubuntu-chroot':
         return 'Ubuntu 24.04 (chroot)';
+      case 'kali-chroot':
+        return 'Kali Linux (chroot)';
       case 'ubuntu':
         return 'Ubuntu 24.04';
       case 'alpine':
@@ -1208,6 +1210,8 @@ class _TerminalSheetState extends State<_TerminalSheet> {
     switch (distro) {
       case 'ubuntu-chroot':
         return 'Ubuntu 24.04';
+      case 'kali-chroot':
+        return 'Kali Linux';
       case 'termux-native':
         return 'Termux';
       default:
