@@ -44,7 +44,7 @@ jobs:
               'private fun isPulseAudioReady(): Boolean',
               'private fun startPulseAudio(): Boolean',
               'private fun stopPulseAudio()',
-              'module-sles-sink',
+              'module-aaudio-sink',
               'port=4713',
               '# Audio is started and supervised by LinuxRuntime in the Android process.',
               'if (!startPulseAudio())',
