@@ -356,7 +356,7 @@ class LinuxRuntime(private val context: Context) {
                 Log.w(TAG, "Prebuilt socket hook not found in jniLibs at ${srcHook.absolutePath}")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to copy prebuilt socket hook: ${e.message}")
+            Log.e(TAG, "Failed to copy socket hook: ${e.message}")
         }
     }
 
@@ -451,7 +451,7 @@ class LinuxRuntime(private val context: Context) {
             // Package installations started inside the XFCE terminal bypass the
             // Kotlin installation flow. Run this after every dpkg transaction so
             // newly unpacked scripts never keep Termux's inaccessible prefix.
-            // apt unpacks and configures in separate dpkg runs, so maintainer
+            // dpkg unpacks and configures in separate dpkg runs, so maintainer
             // scripts are fixed before they execute. The whole script is
             // rewritten, not just the #! line: bodies such as cups' postinst
             // ("mkdir -p /data/data/com.termux/...") or the code-oss and
@@ -1198,6 +1198,7 @@ class LinuxRuntime(private val context: Context) {
      * libc++_shared.so builds don't export (seen: std::__ndk1::__hash_memory). Then
      * libGLX_mesa fails to load and every OpenGL client gets no context at all.
      */
+
     private fun mesaNeedsNewerLibcxx(): Boolean {
         val lib = File(prefixDir, "lib")
         val libcxx = File(lib, "libc++_shared.so")
@@ -2104,7 +2105,7 @@ class LinuxRuntime(private val context: Context) {
             # Audio is started and supervised by LinuxRuntime in the Android process.
     export PULSE_SERVER="tcp:127.0.0.1:4713"
     export PULSE_RUNTIME_PATH="${tmpDir.absolutePath}/pulse"
-    echo "DIAG: Using app-managed OpenSL ES PulseAudio on 127.0.0.1:4713"
+    echo "DIAG: Using app-managed AAudio PulseAudio on 127.0.0.1:4713"
                 echo "DIAG: Launching $desktopCommand natively on DISPLAY=:0 ..."
             exec $desktopCommand
         """.trimIndent()
@@ -2141,7 +2142,7 @@ class LinuxRuntime(private val context: Context) {
         Log.i(TAG, "Termux session started")
     }
 
-    /** Wait until the desktop shell processes that paint the first frame exist. */
+    /** Wait until the desktop shell processes that paint the first desktop frame exist. */
     fun waitForDesktopReady(desktopEnv: String = "xfce4", timeoutMs: Long = 45_000): Boolean {
         val processes = when (normalizedDesktop(desktopEnv)) {
             "lxqt" -> listOf("lxqt-session", "lxqt-panel")
@@ -2203,6 +2204,7 @@ private fun startPulseAudio(): Boolean {
     val pulseDir = File(tmpDir, "pulse").apply { mkdirs() }
     val pulseLog = File(pulseDir, "pulseaudio.log")
     val existing = pulseProcess
+
     if (existing?.isAlive == true) {
         val existingDeadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < existingDeadline) {
@@ -2212,29 +2214,43 @@ private fun startPulseAudio(): Boolean {
         Log.w(TAG, "Existing PulseAudio process is alive but the TCP server is not ready")
         return false
     }
+
     pulseProcess = null
+
     if (isPulseAudioReady()) {
         Log.i(TAG, "Reusing an existing PulseAudio TCP server")
         return true
     }
 
     val pulseBinary = File(binDir, "pulseaudio")
+
     if (!pulseBinary.canExecute()) {
         Log.e(TAG, "PulseAudio executable is missing: ${pulseBinary.absolutePath}")
         return false
     }
+
     File(pulseDir, "native").delete()
+
     val command = listOf(
         pulseBinary.absolutePath,
         "--daemonize=no",
         "--use-pid-file=no",
         "--exit-idle-time=-1",
         "--dl-search-path=${File(prefixDir, "lib/pulseaudio/modules").absolutePath}",
+        "--log-level=debug",
         "-n",
-        "-L", "module-sles-sink",
+        // Use AAudio instead of OpenSL ES on Android 16.
+        "-L", "module-aaudio-sink",
         "-L", "module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1 port=4713",
         "-L", "module-native-protocol-unix socket=${File(pulseDir, "native").absolutePath}",
     )
+
+    // Start with a clean log so errors from this session are easy to identify.
+    runCatching {
+        pulseLog.writeText("===== DroidDesk AAudio PulseAudio startup =====\n")
+    }.onFailure {
+        Log.w(TAG, "Could not reset PulseAudio log", it)
+    }
 
     val started = try {
         ProcessBuilder(command)
@@ -2252,26 +2268,53 @@ private fun startPulseAudio(): Boolean {
         Log.e(TAG, "Failed to launch PulseAudio", error)
         return false
     }
+
     pulseProcess = started
-    Log.i(TAG, "PulseAudio started as an app-managed process, pid=${processPid(started) ?: -1}")
+
+    Log.i(
+        TAG,
+        "AAudio PulseAudio started as an app-managed process, pid=${processPid(started) ?: -1}"
+    )
 
     val deadline = System.currentTimeMillis() + 10_000
+
     while (System.currentTimeMillis() < deadline) {
         if (!started.isAlive) {
-            val exitCode = runCatching { started.exitValue() }.getOrDefault(-1)
-            val tail = runCatching { pulseLog.readLines().takeLast(40).joinToString("\\n") }.getOrDefault("")
-            Log.e(TAG, "PulseAudio exited during startup (code=$exitCode): $tail")
+            val exitCode = runCatching {
+                started.exitValue()
+            }.getOrDefault(-1)
+
+            val tail = runCatching {
+                pulseLog.readLines()
+                    .takeLast(60)
+                    .joinToString("\n")
+            }.getOrDefault("")
+
+            Log.e(
+                TAG,
+                "PulseAudio exited during startup (code=$exitCode): $tail"
+            )
+
             pulseProcess = null
             return false
         }
+
         if (isPulseAudioReady()) {
-            Log.i(TAG, "PulseAudio TCP server ready on 127.0.0.1:4713")
+            Log.i(
+                TAG,
+                "PulseAudio TCP server ready on 127.0.0.1:4713 using AAudio"
+            )
             return true
         }
+
         Thread.sleep(250)
     }
 
-    Log.w(TAG, "PulseAudio is alive but did not pass the TCP readiness probe; leaving it running. Log: ${pulseLog.absolutePath}")
+    Log.w(
+        TAG,
+        "PulseAudio is alive but did not pass the TCP readiness probe. Log: ${pulseLog.absolutePath}"
+    )
+
     return started.isAlive
 }
 
