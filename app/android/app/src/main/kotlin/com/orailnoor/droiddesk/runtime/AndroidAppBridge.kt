@@ -343,7 +343,11 @@ object AndroidAppBridge {
             "sound" -> Settings.ACTION_SOUND_SETTINGS
             "hotspot" -> "android.settings.TETHER_SETTINGS"
             "battery" -> Settings.ACTION_BATTERY_SAVER_SETTINGS
-            else -> Settings.ACTION_SETTINGS
+            "settings" -> Settings.ACTION_SETTINGS
+else -> {
+    Log.w(TAG, "Rejected unknown Android setting action")
+    return
+}
         }
         runCatching {
             context.startActivity(Intent(settingsAction).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
