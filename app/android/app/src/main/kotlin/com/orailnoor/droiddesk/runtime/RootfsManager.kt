@@ -129,11 +129,12 @@ class RootfsManager(private val context: Context) {
                 connection.requestMethod = "GET"
 
                 // Handle redirects or Already Satisfied (416)
-                if (connection.responseCode == 416) {
-                    // Already fully downloaded
-                    onProgress(1.0, "$distroName already downloaded")
-                    configFile.writeText(distro)
-                    return@thread
+                                if (connection.responseCode == 416) {
+                    connection.disconnect()
+                    targetFile.delete()
+                    throw IllegalStateException(
+                        "Resume request rejected (HTTP 416). Partial download removed; retry from the beginning."
+                    )
                 }
 
                 if (connection.responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
