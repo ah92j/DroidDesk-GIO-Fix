@@ -329,41 +329,19 @@ class RootfsManager(private val context: Context) {
                     rangeStart != initialDownloadedBytes ||
                     rangeEnd < rangeStart ||
                     rangeTotal <= rangeEnd ||
-                val distro = getInstalledDistro()
-                val expectedSha256 = DISTRO_SHA256[distro]
-                    ?: throw IllegalStateException("Unknown or unsupported distro")
-
-                val extension = if (distro == "kali") "xz" else "gz"
-                val tarball = File(downloadDir, "$distro-rootfs.tar.$extension")
-
-                if (
-                    !tarball.isFile ||
-                    java.nio.file.Files.isSymbolicLink(tarball.toPath())
+                    rangeEnd != rangeTotal - 1L
                 ) {
-                    onProgress(-1.0, "Rootfs tarball is missing or invalid. Download first.")
-                    return@thread
+                    rejectDownload("Invalid Content-Range values")
                 }
 
-                if (tarball.canonicalFile.parentFile != downloadDir.canonicalFile) {
-                    throw SecurityException("Rootfs archive is outside download directory")
+                if (responseLength >= 0L) {
+                    expectedResponseBytes = rangeEnd - rangeStart + 1L
+
+                    if (responseLength != expectedResponseBytes) {
+                        rejectDownload("Content-Length does not match Content-Range")
+                    }
                 }
 
-                verifySha256(tarball, expectedSha256)
-
-                val setupMarker = File(context.filesDir, "SETUP_COMPLETE")
-                if (setupMarker.exists() && !setupMarker.delete()) {
-                    throw IllegalStateException("Could not clear previous setup marker")
-                }
-
-                if (rootfsDir.exists() && !rootfsDir.deleteRecursively()) {
-                    throw IllegalStateException("Could not remove previous rootfs")
-                }
-
-                if (!rootfsDir.mkdirs() && !rootfsDir.isDirectory) {
-                    throw IllegalStateException("Could not create rootfs directory")
-                }
-
-                onProgress(0.1, "Extracting ${DISTRO_NAMES[distro]}...")
                 expectedTotalBytes = rangeTotal
             } else {
                 if (responseLength == 0L) {
