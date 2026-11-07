@@ -144,6 +144,10 @@ jobs:
       - name: Build ARM64 release APK
         working-directory: app
         shell: bash
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           flutter build apk --release --target-platform android-arm64
