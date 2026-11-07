@@ -9,6 +9,7 @@ on:
     paths:
       - '.github/workflows/droiddesk-patch-and-build.yml'
       - 'app/android/app/build.gradle.kts'
+      - 'app/android/app/src/main/AndroidManifest.xml'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootShell.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
@@ -56,10 +57,17 @@ jobs:
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
           ).read_text()
           pubspec = Path('app/pubspec.yaml').read_text()
+          manifest = Path('app/android/app/src/main/AndroidManifest.xml').read_text()
 
           required_runtime = [
               'env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"',
               'env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath',
+              'private fun getPulseAudioSinkNames(): List<String>?',
+              'private fun getPulseAudioEnvironment(pulseDir: File)',
+              'environment.remove("LD_PRELOAD")',
+              '"list", "short", "sinks"',
+              '"module-oboe-sink"',
+              '"module-aaudio-sink"',
               'env["GIO_LAUNCH_DESKTOP"]',
               'private fun isPulseAudioReady(): Boolean',
               'private fun startPulseAudio(): Boolean',
@@ -109,15 +117,18 @@ jobs:
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
 
-          if 'version: 1.3.4+9' not in pubspec:
-              missing.append('version: 1.3.4+9')
+          if 'version: 1.3.5+10' not in pubspec:
+              missing.append('version: 1.3.5+10')
+
+          if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
+              missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
 
           if missing:
               raise SystemExit(
                   'Missing expected committed source changes: ' + '; '.join(missing)
               )
 
-          print('Audio, GIO, chroot mounts, distro status, updater security, XFCE and version checks passed.')
+          print('Audio sinks/backends, GIO, chroot mounts, distro status, updater security, permissions, XFCE and version checks passed.')
           PY
 
       - name: Set up Java 17
@@ -245,7 +256,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-GIO-Fix-1.3.4-arm64-permanent-key
+          name: DroidDesk-GIO-Fix-1.3.5-arm64-permanent-key
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
