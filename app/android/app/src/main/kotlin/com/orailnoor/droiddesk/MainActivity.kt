@@ -336,9 +336,17 @@ class MainActivity : FlutterActivity() {
                 "downloadRootfs" -> {
                     installThread("download-rootfs") {
                         try {
+                            val distro = call.argument<String>("distro") ?: "ubuntu"
+
+                            if (distro !in setOf("ubuntu", "alpine", "kali")) {
+                                runOnUiThread { result.success(false) }
+                                return@installThread
+                            }
+
                             val latch = java.util.concurrent.CountDownLatch(1)
                             var success = false
-                            chrootRuntime.downloadRootfs { progress, status ->
+
+                            chrootRuntime.downloadRootfs(distro) { progress, status ->
                                 runOnUiThread {
                                     flutterEngine.dartExecutor.binaryMessenger.let { messenger ->
                                         MethodChannel(messenger, CHANNEL).invokeMethod(
@@ -347,17 +355,20 @@ class MainActivity : FlutterActivity() {
                                         )
                                     }
                                 }
+
                                 if (progress >= 1.0 || progress < 0) {
                                     success = progress >= 1.0
                                     latch.countDown()
                                 }
                             }
+
                             latch.await()
                             runOnUiThread { result.success(success) }
                         } catch (e: Exception) {
                             runOnUiThread { result.success(false) }
                         }
                     }
+                }
                 }
 
                 "extractRootfs" -> {
