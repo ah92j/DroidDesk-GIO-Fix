@@ -199,6 +199,21 @@ class RootfsManager(private val context: Context) {
             connection.disconnect()
             throw IllegalStateException("Unexpected download HTTP status: $responseCode")
         }
+                if (initialDownloadedBytes > 0L) {
+            val contentRange = connection.getHeaderField("Content-Range")
+            val returnedStart = contentRange
+                ?.substringAfter("bytes ", "")
+                ?.substringBefore("-")
+                ?.toLongOrNull()
+
+            if (returnedStart != initialDownloadedBytes) {
+                connection.disconnect()
+                targetFile.delete()
+                throw IllegalStateException(
+                    "Server returned an invalid Content-Range for resumed download."
+                )
+            }
+        }
 
         val totalBytes = connection.contentLengthLong
         val expectedTotal = downloadedBytes + totalBytes
