@@ -369,7 +369,7 @@ class MainActivity : FlutterActivity() {
                         }
                     }
                 }
-                }
+                
 
                 "extractRootfs" -> {
                     installThread("extract-rootfs") {
