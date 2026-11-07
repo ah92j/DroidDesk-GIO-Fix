@@ -285,6 +285,10 @@ class AppState extends ChangeNotifier {
   // ── Setup Flow ──
 
   void setSelectedDistro(String distro) {
+    if (distro != 'ubuntu' && distro != 'kali') {
+      return;
+    }
+
     _selectedDistro = distro;
     notifyListeners();
   }
