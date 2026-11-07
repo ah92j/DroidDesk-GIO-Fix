@@ -310,8 +310,17 @@ class RootfsManager(private val context: Context) {
                 
                 // Android's tar will fail (code 1 or 2) when trying to chown files to root or create /dev nodes.
                 // We ignore this as long as the core filesystem extracted successfully.
-                if (exitCode != 0 && (!binDir.exists() || binDir.list()?.isEmpty() == true)) {
-                    throw RuntimeException("tar failed (code $exitCode): $lastLine")
+                                if (exitCode != 0) {
+                    val hasCoreFilesystem =
+                        File(rootfsDir, "bin").let { it.exists() && it.list()?.isNotEmpty() == true } &&
+                        File(rootfsDir, "usr").isDirectory &&
+                        File(rootfsDir, "etc").isDirectory
+
+                    if (!hasCoreFilesystem) {
+                        throw RuntimeException("tar failed (code $exitCode): $lastLine")
+                    }
+
+                    Log.w(TAG, "tar reported extraction warnings; core directories exist")
                 }
 
                 onProgress(0.7, "Configuring Linux environment...")
