@@ -428,8 +428,13 @@ class ChrootRuntime(private val context: Context) {
             }.onFailure { Log.w(TAG, "Android desktop launchers could not be refreshed", it) }
         }
 
-        ensureMounts()
-        bindX11Socket()
+        try {
+            ensureMounts()
+            bindX11Socket()
+        } catch (error: Exception) {
+            Log.e(TAG, "Cannot start chroot session because mount setup failed", error)
+            return
+        }
 
         if (!File(rootfsDir, "usr/bin/xclip").canExecute()) {
             Log.i(TAG, "Installing the chroot clipboard compatibility helper")
