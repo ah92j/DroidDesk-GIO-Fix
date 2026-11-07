@@ -107,10 +107,19 @@ class ChrootRuntime(private val context: Context) {
      */
     fun extractRootfs(onProgress: (Double, String) -> Unit) {
         rootfsManager.extractRootfs { progress, status ->
-            onProgress(progress, status)
             if (progress == 1.0) {
-                // Additional chroot-specific configuration
-                configureChrootRootfs()
+                try {
+                    configureChrootRootfs()
+                    onProgress(1.0, status)
+                } catch (error: Exception) {
+                    Log.e(TAG, "Chroot rootfs configuration failed", error)
+                    onProgress(
+                        -1.0,
+                        "Chroot configuration failed: ${error.message ?: "unknown error"}"
+                    )
+                }
+            } else {
+                onProgress(progress, status)
             }
         }
     }
