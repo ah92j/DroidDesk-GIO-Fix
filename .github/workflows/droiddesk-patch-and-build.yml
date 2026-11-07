@@ -129,12 +129,7 @@ jobs:
             -storepass "$DROIDDESK_KEYSTORE_PASSWORD" \
             -alias "$DROIDDESK_KEY_ALIAS" >/dev/null
 
-          {
-            echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH"
-            echo "DROIDDESK_KEYSTORE_PASSWORD=$DROIDDESK_KEYSTORE_PASSWORD"
-            echo "DROIDDESK_KEY_ALIAS=$DROIDDESK_KEY_ALIAS"
-            echo "DROIDDESK_KEY_PASSWORD=$DROIDDESK_KEY_PASSWORD"
-          } >> "$GITHUB_ENV"
+                    echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
           echo "Permanent release keystore loaded and alias validated."
 
