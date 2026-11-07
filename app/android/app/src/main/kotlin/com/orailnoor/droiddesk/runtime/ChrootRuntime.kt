@@ -83,11 +83,24 @@ class ChrootRuntime(private val context: Context) {
     /**
      * Download the selected ARM64 rootfs.
      */
+        /**
+     * Download a supported ARM64 rootfs for the current chroot runtime.
+     */
     fun downloadRootfs(
         distro: String = "ubuntu",
         onProgress: (Double, String) -> Unit,
     ) {
-        rootfsManager.downloadRootfs(distro, onProgress)
+        val selectedDistro = distro.trim()
+
+        if (selectedDistro != "ubuntu" && selectedDistro != "kali") {
+            onProgress(
+                -1.0,
+                "Alpine is not supported by the current chroot runtime. Select Ubuntu or Kali."
+            )
+            return
+        }
+
+        rootfsManager.downloadRootfs(selectedDistro, onProgress)
     }
     /**
      * Extract the downloaded rootfs and configure it for chroot.
