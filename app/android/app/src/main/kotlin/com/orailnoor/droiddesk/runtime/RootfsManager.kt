@@ -220,87 +220,152 @@ class RootfsManager(private val context: Context) {
         Log.i(TAG, "Rootfs SHA-256 verification passed")
         }
 
-    private fun downloadFromConnection(
+        private fun downloadFromConnection(
         connection: HttpURLConnection,
         targetFile: File,
         distroName: String,
         initialDownloadedBytes: Long,
         onProgress: (Double, String) -> Unit
     ) {
-                var downloadedBytes = initialDownloadedBytes
-        val responseCode = connection.responseCode
-
-        if (responseCode == 416) {
-            connection.disconnect()
-            targetFile.delete()
-            throw IllegalStateException("Resume request rejected. Partial download removed.")
-        }
-
-        if (initialDownloadedBytes > 0L &&
-            responseCode != HttpURLConnection.HTTP_PARTIAL
-        ) {
-            connection.disconnect()
-            targetFile.delete()
-            throw IllegalStateException("Server did not honor download resume. Retry from the beginning.")
-        }
-
-        if (initialDownloadedBytes == 0L &&
-            responseCode != HttpURLConnection.HTTP_OK
-        ) {
-            connection.disconnect()
-            throw IllegalStateException("Unexpected download HTTP status: $responseCode")
-        }
-                if (initialDownloadedBytes > 0L) {
-            val contentRange = connection.getHeaderField("Content-Range")
-            val returnedStart = contentRange
-                ?.substringAfter("bytes ", "")
-                ?.substringBefore("-")
-                ?.toLongOrNull()
-
-            if (returnedStart != initialDownloadedBytes) {
-                connection.disconnect()
+        try {
+            fun rejectDownload(message: String): Nothing {
                 targetFile.delete()
-                throw IllegalStateException(
-                    "Server returned an invalid Content-Range for resumed download."
-                )
+                throw IllegalStateException(message)
             }
-        }
 
-        val totalBytes = connection.contentLengthLong
-        val expectedTotal = downloadedBytes + totalBytes
+            if (initialDownloadedBytes < 0L) {
+                rejectDownload("Invalid initial download size")
+            }
 
-        if (totalBytes == 0L) {
-            connection.disconnect()
-            targetFile.delete()
-            throw IllegalStateException("Server returned an empty download.")
-        }
+            val responseCode = connection.responseCode
 
-        val buffer = ByteArray(BUFFER_SIZE)
+            if (responseCode == 416) {
+                rejectDownload("Resume request rejected (HTTP 416)")
+            }
 
-        connection.inputStream.use { input ->
-            FileOutputStream(targetFile, true).use { output ->
-                var bytesRead: Int
-                while (input.read(buffer).also { bytesRead = it } != -1) {
-                    output.write(buffer, 0, bytesRead)
-                    downloadedBytes += bytesRead
-                    if (expectedTotal > 0) {
-                        val progress = downloadedBytes.toDouble() / expectedTotal
-                        val downloadedMB = downloadedBytes / (1024 * 1024)
-                        val totalMB = expectedTotal / (1024 * 1024)
-                        onProgress(
-                            progress,
-                            "Downloading $distroName: ${downloadedMB}MB / ${totalMB}MB"
-                        )
+            if (initialDownloadedBytes > 0L &&
+                responseCode != HttpURLConnection.HTTP_PARTIAL
+            ) {
+                rejectDownload("Server did not honor download resume")
+            }
+
+            if (initialDownloadedBytes == 0L &&
+                responseCode != HttpURLConnection.HTTP_OK
+            ) {
+                rejectDownload("Unexpected download HTTP status: $responseCode")
+            }
+
+            val responseLength = connection.contentLengthLong
+            var expectedResponseBytes: Long? = null
+            var expectedTotalBytes: Long? = null
+
+            if (initialDownloadedBytes > 0L) {
+                val contentRange = connection.getHeaderField("Content-Range")
+                val rangeMatch = Regex(
+                    "^bytes ([0-9]+)-([0-9]+)/([0-9]+)$",
+                    RegexOption.IGNORE_CASE
+                ).matchEntire(contentRange?.trim().orEmpty())
+                    ?: rejectDownload("Missing or invalid Content-Range")
+
+                val rangeStart = rangeMatch.groupValues[1].toLongOrNull()
+                    ?: rejectDownload("Invalid Content-Range start")
+
+                val rangeEnd = rangeMatch.groupValues[2].toLongOrNull()
+                    ?: rejectDownload("Invalid Content-Range end")
+
+                val rangeTotal = rangeMatch.groupValues[3].toLongOrNull()
+                    ?: rejectDownload("Invalid Content-Range total")
+
+                if (
+                    rangeStart != initialDownloadedBytes ||
+                    rangeEnd < rangeStart ||
+                    rangeTotal <= rangeEnd ||
+                    rangeEnd != rangeTotal - 1L
+                ) {
+                    rejectDownload("Content-Range boundaries are invalid")
+                }
+
+                val rangeLength = rangeEnd - rangeStart + 1L
+
+                if (
+                    responseLength == 0L ||
+                    (responseLength > 0L && responseLength != rangeLength)
+                ) {
+                    rejectDownload("Content-Length does not match Content-Range")
+                }
+
+                expectedResponseBytes = rangeLength
+                expectedTotalBytes = rangeTotal
+            } else {
+                if (responseLength == 0L) {
+                    rejectDownload("Server returned an empty download")
+                }
+
+                if (responseLength > 0L) {
+                    expectedResponseBytes = responseLength
+                    expectedTotalBytes = responseLength
+                }
+            }
+
+            var downloadedBytes = initialDownloadedBytes
+            var receivedBytes = 0L
+            val buffer = ByteArray(BUFFER_SIZE)
+
+            connection.inputStream.use { input ->
+                FileOutputStream(
+                    targetFile,
+                    initialDownloadedBytes > 0L
+                ).use { output ->
+                    while (true) {
+                        val bytesRead = input.read(buffer)
+                        if (bytesRead < 0) break
+                        if (bytesRead == 0) continue
+
+                        val expected = expectedResponseBytes
+                        if (
+                            expected != null &&
+                            receivedBytes > expected - bytesRead
+                        ) {
+                            rejectDownload("Server sent more data than expected")
+                        }
+
+                        output.write(buffer, 0, bytesRead)
+
+                        receivedBytes += bytesRead
+                        downloadedBytes += bytesRead
+
+                        val total = expectedTotalBytes
+                        if (total != null && total > 0L) {
+                            val progress =
+                                downloadedBytes.toDouble() / total
+                            val downloadedMB =
+                                downloadedBytes / (1024 * 1024)
+                            val totalMB = total / (1024 * 1024)
+
+                            onProgress(
+                                progress,
+                                "Downloading $distroName: ${downloadedMB}MB / ${totalMB}MB"
+                            )
+                        }
                     }
                 }
             }
-        }
-                connection.disconnect()
 
-        if (totalBytes > 0L && downloadedBytes != expectedTotal) {
-            throw IllegalStateException(
-                "Download size mismatch: expected $expectedTotal bytes, received $downloadedBytes bytes."
-            )
+            if (
+                expectedResponseBytes != null &&
+                receivedBytes != expectedResponseBytes
+            ) {
+                rejectDownload("Received data size does not match expected response size")
+            }
+
+            if (
+                expectedTotalBytes != null &&
+                downloadedBytes != expectedTotalBytes
+            ) {
+                rejectDownload("Total download size does not match Content-Range")
+            }
+        } finally {
+            connection.disconnect()
         }
     }
 
