@@ -19,6 +19,7 @@ class ChrootRuntime(private val context: Context) {
     companion object {
         private const val TAG = "ChrootRuntime"
         private const val CHROOT_DE_MARKER = ".chroot_de_installed"
+        private val SUPPORTED_DESKTOP_ENVIRONMENTS = setOf("xfce4", "lxqt", "mate", "kde")
 
         // Ubuntu 24.04 ARM64 minimal rootfs
         const val ROOTFS_URL =
@@ -40,6 +41,18 @@ class ChrootRuntime(private val context: Context) {
     // ── Status ──
 
     fun hasRoot(): Boolean = rootShell.hasRoot()
+
+    fun getInstalledDistro(): String = rootfsManager.getInstalledDistro()
+
+    fun getInstalledDE(): String {
+        val configured = rootfsManager.getInstalledDE()
+        if (configured.isNotBlank()) return configured
+        val markerValue = runCatching {
+            File(rootfsDir, CHROOT_DE_MARKER).takeIf { it.isFile }?.readText()?.trim().orEmpty()
+        }.getOrDefault("")
+        if (markerValue in SUPPORTED_DESKTOP_ENVIRONMENTS) return markerValue
+        return if (File(rootfsDir, "usr/bin/startxfce4").isFile) "xfce4" else ""
+    }
 
     fun isRootfsReady(): Boolean = rootfsManager.isRootfsReady()
 
@@ -194,6 +207,10 @@ class ChrootRuntime(private val context: Context) {
         onProgress: (Double, String) -> Unit = { _, _ -> },
         onLog: (String) -> Unit = {}
     ) {
+        if (desktopEnv !in SUPPORTED_DESKTOP_ENVIRONMENTS) {
+            onProgress(-1.0, "Unsupported desktop environment: $desktopEnv")
+            return
+        }
         if (!hasRoot()) {
             onProgress(-1.0, "Root access required for chroot mode")
             return
@@ -371,6 +388,10 @@ class ChrootRuntime(private val context: Context) {
      * The caller should ensure the X11 socket directory is mounted before this.
      */
     fun startSession(desktopEnv: String = "xfce4", width: Int = 1920, height: Int = 1080) {
+        if (desktopEnv !in SUPPORTED_DESKTOP_ENVIRONMENTS) {
+            Log.e(TAG, "Unsupported chroot desktop environment: $desktopEnv")
+            return
+        }
         if (!hasRoot()) {
             Log.e(TAG, "Cannot start chroot session without root")
             return
@@ -550,7 +571,8 @@ SESSEOF
             "lxqt" -> listOf("lxqt-session", "lxqt-panel")
             "mate" -> listOf("mate-session", "mate-panel")
             "kde" -> listOf("plasmashell")
-            else -> listOf("xfdesktop", "xfce4-panel")
+            "xfce4" -> listOf("xfdesktop", "xfce4-panel")
+            else -> return false
         }
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
@@ -690,68 +712,91 @@ SESSEOF
 
     /**
      * Ensure /dev, /proc, /sys, /dev/pts and tmpfs mounts are active.
+     * Every privileged operation is checked so a partial mount cannot be
+     * mistaken for a ready chroot.
      */
     fun ensureMounts() {
-        if (!hasRoot()) return
-
-        val mounts = rootShell.exec("mount").lines()
-        fun isMounted(path: String): Boolean {
-            val absolute = File(rootfsDir, path).absolutePath
-            return mounts.any { it.contains(" on $absolute ") }
+        if (!hasRoot()) {
+            throw IllegalStateException("Root access is required to mount chroot filesystems")
+        }
+        if (!isRootfsReady()) {
+            throw IllegalStateException("Chroot rootfs is not ready")
         }
 
-        mountIfNeeded("/dev", "--bind /dev") { isMounted("dev") }
-        mountIfNeeded("/dev/pts", "-t devpts devpts") { isMounted("dev/pts") }
-        mountIfNeeded("/dev/shm", "-t tmpfs tmpfs") { isMounted("dev/shm") }
-        mountIfNeeded("/proc", "--bind /proc") { isMounted("proc") }
-        mountIfNeeded("/sys", "--bind /sys") { isMounted("sys") }
-        mountIfNeeded("/run", "-t tmpfs tmpfs") { isMounted("run") }
-        mountIfNeeded("/tmp", "-t tmpfs tmpfs") { isMounted("tmp") }
+        mountIfNeeded("/dev", "--bind /dev")
+        mountIfNeeded("/dev/pts", "-t devpts devpts")
+        mountIfNeeded("/dev/shm", "-t tmpfs tmpfs")
+        mountIfNeeded("/proc", "--bind /proc")
+        mountIfNeeded("/sys", "--bind /sys")
+        mountIfNeeded("/run", "-t tmpfs tmpfs")
+        mountIfNeeded("/tmp", "-t tmpfs tmpfs")
 
-        // Fix missing symlinks in Android's /dev for chroot compatibility
+        // Repair descriptor links used by tools inside the chroot.
         val devPath = File(rootfsDir, "dev").absolutePath
-        rootShell.exec("ln -snf /proc/self/fd $devPath/fd")
-        rootShell.exec("ln -snf /proc/self/fd/0 $devPath/stdin")
-        rootShell.exec("ln -snf /proc/self/fd/1 $devPath/stdout")
-        rootShell.exec("ln -snf /proc/self/fd/2 $devPath/stderr")
+        rootShell.execChecked("ln -snf /proc/self/fd ${shellQuote("$devPath/fd")}")
+        rootShell.execChecked("ln -snf /proc/self/fd/0 ${shellQuote("$devPath/stdin")}")
+        rootShell.execChecked("ln -snf /proc/self/fd/1 ${shellQuote("$devPath/stdout")}")
+        rootShell.execChecked("ln -snf /proc/self/fd/2 ${shellQuote("$devPath/stderr")}")
 
-        // Create runtime dirs after tmpfs is mounted
-        execChroot("mkdir -p /tmp/.X11-unix /tmp/runtime-root /root")
+        if (execChroot("mkdir -p /tmp/.X11-unix /tmp/runtime-root /root") != 0) {
+            throw IllegalStateException("Could not prepare chroot runtime directories")
+        }
 
-        // Refresh DNS — the phone's network may have changed since the
-        // rootfs was first extracted, and package installs can clobber resolv.conf
-        // Ubuntu makes resolv.conf a symlink to systemd; delete it first so writeText succeeds.
-        val resolvConf = File(rootfsDir, "etc/resolv.conf")
-        resolvConf.delete()
-        resolvConf.writeText("nameserver 8.8.8.8\nnameserver 8.8.4.4\nnameserver 1.1.1.1\n")
+        // resolv.conf may be root-owned or a symlink into systemd.
+        // Replace it as root; app-process File.writeText() is unreliable
+        // after apt has changed ownership inside the rootfs.
+        val resolvConfPath = File(rootfsDir, "etc/resolv.conf").absolutePath
+        val dnsConfig = "nameserver 8.8.8.8\nnameserver 8.8.4.4\nnameserver 1.1.1.1\n"
+        val encodedDns = Base64.encodeToString(dnsConfig.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        rootShell.execChecked(
+            "rm -f ${shellQuote(resolvConfPath)} && printf '%s' ${shellQuote(encodedDns)} | base64 -d > ${shellQuote(resolvConfPath)}"
+        )
         Log.i(TAG, "Refreshed chroot resolv.conf")
     }
 
-    private fun mountIfNeeded(relative: String, mountArgs: String, alreadyMounted: () -> Boolean) {
-        if (alreadyMounted()) return
-        val target = File(rootfsDir, relative).absolutePath
-        try {
-            rootShell.exec("mkdir -p $target && mount $mountArgs $target")
-            Log.i(TAG, "Mounted $target")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to mount $target: ${e.message}")
+    private fun isMountPresent(target: String): Boolean {
+        return rootShell.execChecked("mount").lineSequence().any { line ->
+            line.contains(" on $target ")
         }
+    }
+
+    private fun mountIfNeeded(relative: String, mountArgs: String) {
+        val target = File(rootfsDir, relative).absolutePath
+        if (isMountPresent(target)) return
+
+        rootShell.execChecked(
+            "mkdir -p ${shellQuote(target)} && mount $mountArgs ${shellQuote(target)}"
+        )
+        if (!isMountPresent(target)) {
+            throw IllegalStateException("Mount verification failed for $target")
+        }
+        Log.i(TAG, "Mounted $target")
     }
 
     /**
      * Bind-mount the host X11 socket directory into the chroot.
      */
     fun bindX11Socket() {
-        if (!hasRoot()) return
-        x11HostDir.mkdirs()
+        if (!hasRoot()) {
+            throw IllegalStateException("Root access is required to bind the X11 socket")
+        }
+        if (!isRootfsReady()) {
+            throw IllegalStateException("Chroot rootfs is not ready")
+        }
+        if (!x11HostDir.exists() && !x11HostDir.mkdirs()) {
+            throw IllegalStateException("Could not create the host X11 socket directory")
+        }
+
         val chrootX11 = File(rootfsDir, "tmp/.X11-unix").absolutePath
         val hostX11 = x11HostDir.absolutePath
+        if (isMountPresent(chrootX11)) return
 
-        // If already mounted, leave it
-        val mounts = rootShell.exec("mount").lines()
-        if (mounts.any { it.contains(" on $chrootX11 ") }) return
-
-        rootShell.exec("mkdir -p $chrootX11 && mount --bind $hostX11 $chrootX11")
+        rootShell.execChecked(
+            "mkdir -p ${shellQuote(chrootX11)} && mount --bind ${shellQuote(hostX11)} ${shellQuote(chrootX11)}"
+        )
+        if (!isMountPresent(chrootX11)) {
+            throw IllegalStateException("X11 socket bind mount could not be verified")
+        }
         Log.i(TAG, "Bound X11 socket: $hostX11 -> $chrootX11")
     }
 
