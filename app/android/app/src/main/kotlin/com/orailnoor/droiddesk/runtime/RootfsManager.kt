@@ -155,6 +155,11 @@ class RootfsManager(private val context: Context) {
                     }
                     downloadFromConnection(connection, targetFile, distroName, downloadedBytes, onProgress)
                 }
+                                verifySha256(
+                    targetFile,
+                    DISTRO_SHA256[distro]
+                        ?: throw IllegalStateException("Missing SHA-256 for $distro")
+                )
 
                 // Save distro selection
                 configFile.writeText(distro)
