@@ -752,9 +752,8 @@ SESSEOF
         // after apt has changed ownership inside the rootfs.
         val resolvConfPath = File(rootfsDir, "etc/resolv.conf").absolutePath
         val dnsConfig = "nameserver 8.8.8.8\nnameserver 8.8.4.4\nnameserver 1.1.1.1\n"
-        val encodedDns = Base64.encodeToString(dnsConfig.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         rootShell.execChecked(
-            "rm -f ${shellQuote(resolvConfPath)} && printf '%s' ${shellQuote(encodedDns)} | base64 -d > ${shellQuote(resolvConfPath)}"
+            "rm -f ${shellQuote(resolvConfPath)} && printf %s ${shellQuote(dnsConfig)} > ${shellQuote(resolvConfPath)}"
         )
         Log.i(TAG, "Refreshed chroot resolv.conf")
     }
