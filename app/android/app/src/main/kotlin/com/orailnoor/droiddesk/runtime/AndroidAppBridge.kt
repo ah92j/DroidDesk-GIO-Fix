@@ -308,23 +308,56 @@ object AndroidAppBridge {
     )
 
     private fun serve(context: Context, socket: LocalServerSocket) {
-        while (server === socket) {
-            var client: LocalSocket? = null
-            try {
-                client = socket.accept()
-                val command = client.inputStream.bufferedReader().readLine()?.trim().orEmpty()
+    while (server === socket) {
+        var client: LocalSocket? = null
+        try {
+            client = socket.accept()
+            client.soTimeout = 2000
+
+            val input = client.inputStream
+            val buffer = ByteArray(256)
+            var length = 0
+            var terminated = false
+            var tooLong = false
+
+            while (length <= buffer.size) {
+                val value = input.read()
+
+                if (value == -1) break
+
+                if (value == 10) {
+                    terminated = true
+                    break
+                }
+
+                if (length == buffer.size) {
+                    tooLong = true
+                    break
+                }
+
+                buffer[length++] = value.toByte()
+            }
+
+            if (!terminated || tooLong || length == 0) {
+                Log.w(TAG, "Rejected malformed Android app launcher request")
+            } else {
+                val command = String(buffer, 0, length, Charsets.UTF_8).trim()
+
                 if (command.startsWith("action:")) {
                     launchSystemAction(context, command.removePrefix("action:"))
                 } else {
                     launchPackage(context, command)
                 }
-            } catch (error: Exception) {
-                if (server === socket) Log.w(TAG, "Android app launcher request failed", error)
-            } finally {
-                runCatching { client?.close() }
             }
+        } catch (error: Exception) {
+            if (server === socket) {
+                Log.w(TAG, "Android app launcher request failed", error)
+            }
+        } finally {
+            runCatching { client?.close() }
         }
     }
+}
 
     private fun launchPackage(context: Context, packageName: String): Boolean {
         if (!packageName.matches(Regex("[A-Za-z0-9_.]+"))) return false
