@@ -229,7 +229,13 @@ class RootfsManager(private val context: Context) {
                 }
             }
         }
-        connection.disconnect()
+                connection.disconnect()
+
+        if (totalBytes > 0L && downloadedBytes != expectedTotal) {
+            throw IllegalStateException(
+                "Download size mismatch: expected $expectedTotal bytes, received $downloadedBytes bytes."
+            )
+        }
     }
 
     // ── Extraction ──
