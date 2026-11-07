@@ -369,23 +369,24 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _runChrootSetup() async {
-    _statusMessage = 'Downloading Ubuntu rootfs...';
+    final distroLabel = _selectedDistro == 'kali' ? 'Kali Linux' : 'Ubuntu';
+    _statusMessage = 'Downloading $distroLabel rootfs...';
     _isDownloading = true;
     _downloadProgress = 0.0;
     notifyListeners();
     if (!await DroidDeskPlatform.downloadRootfs(_selectedDistro)) {
       throw StateError(
-        'Ubuntu download failed. Check your connection and retry.',
+        '$distroLabel download failed. Check your connection and retry.',
       );
     }
 
     _isDownloading = false;
     _isExtracting = true;
     _extractProgress = 0.0;
-    _statusMessage = 'Extracting rootfs...';
+    _statusMessage = 'Extracting $distroLabel rootfs...';
     notifyListeners();
     if (!await DroidDeskPlatform.extractRootfs()) {
-      throw StateError('Ubuntu filesystem extraction failed');
+      throw StateError('$distroLabel filesystem extraction failed');
     }
 
     _statusMessage =
