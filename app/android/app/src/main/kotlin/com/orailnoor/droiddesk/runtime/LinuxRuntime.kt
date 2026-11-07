@@ -302,11 +302,16 @@ class LinuxRuntime(private val context: Context) {
             return
         }
 
-        // Extract the bootstrap so the top-level bin/lib/etc directories land under prefixDir/usr
-        extractZip(tmpZip, prefixDir)
-
-        // Restore symlinks from SYMLINKS.txt
-        restoreSymlinks(prefixDir)
+                // Extract the bootstrap and restore its symlinks safely.
+        try {
+            extractZip(tmpZip, prefixDir)
+            restoreSymlinks(prefixDir)
+        } catch (e: Exception) {
+            Log.e(TAG, "Bootstrap extraction failed: ${e.message}", e)
+            prefixDir.deleteRecursively()
+            tmpZip.delete()
+            return
+        }
 
         // Create apt config override so apt uses our prefix
         createAptConfigOverride()
@@ -360,20 +365,77 @@ class LinuxRuntime(private val context: Context) {
         }
     }
 
-    private fun extractZip(zipFile: File, destDir: File) {
-        destDir.mkdirs()
+        private fun extractZip(zipFile: File, destDir: File) {
+        if (!destDir.exists() && !destDir.mkdirs()) {
+            throw IllegalStateException("Could not create ZIP destination directory")
+        }
+
+        if (!destDir.isDirectory) {
+            throw IllegalStateException("ZIP destination is not a directory")
+        }
+
+        val canonicalRoot = destDir.canonicalFile
+        val rootPath = canonicalRoot.path
+        val rootPrefix = rootPath + File.separator
+
         ZipInputStream(zipFile.inputStream()).use { zis ->
             var entry: ZipEntry? = zis.nextEntry
+
             while (entry != null) {
-                val outFile = File(destDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    outFile.outputStream().use { output ->
-                        zis.copyTo(output)
+                val entryName = entry.name.replace('\\', '/')
+                val segments = entryName.split('/')
+
+                if (
+                    entryName.isBlank() ||
+                    entryName.startsWith("/") ||
+                    Regex("^[A-Za-z]:").containsMatchIn(entryName) ||
+                    segments.any { it == ".." }
+                ) {
+                    throw SecurityException("Blocked unsafe ZIP entry: ${entry.name}")
+                }
+
+                val outFile = File(canonicalRoot, entryName).canonicalFile
+                val outputPath = outFile.path
+
+                if (
+                    outputPath != rootPath &&
+                    !outputPath.startsWith(rootPrefix)
+                ) {
+                    throw SecurityException("ZIP entry escaped destination: ${entry.name}")
+                }
+
+                if (outputPath == rootPath && !entry.isDirectory) {
+                    throw SecurityException("ZIP entry targets destination root")
+                }
+
+                if (outputPath != rootPath) {
+                    if (entry.isDirectory) {
+                        if (!outFile.exists() && !outFile.mkdirs()) {
+                            throw IllegalStateException("Could not create ZIP directory")
+                        }
+
+                        if (!outFile.isDirectory) {
+                            throw IllegalStateException("ZIP directory conflicts with a file")
+                        }
+                    } else {
+                        val parent = outFile.parentFile
+                            ?: throw IllegalStateException("ZIP entry has no parent directory")
+
+                        if (!parent.exists() && !parent.mkdirs()) {
+                            throw IllegalStateException("Could not create ZIP entry parent")
+                        }
+
+                        if (!parent.isDirectory || outFile.isDirectory) {
+                            throw IllegalStateException("Invalid ZIP extraction target")
+                        }
+
+                        outFile.outputStream().use { output ->
+                            zis.copyTo(output)
+                        }
                     }
                 }
+
+                zis.closeEntry()
                 entry = zis.nextEntry
             }
         }
