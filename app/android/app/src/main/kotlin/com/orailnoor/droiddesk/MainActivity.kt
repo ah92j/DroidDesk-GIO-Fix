@@ -83,9 +83,7 @@ class MainActivity : FlutterActivity() {
         chrootRuntime = ChrootRuntime(this)
         desktopIntegration = DesktopIntegration(this)
 
-        if (intent.getBooleanExtra("autoSetup", false)) {
-            runAutoChrootSetup()
-        }
+        
         handleHomeLaunch(intent)
         maybeAutoStartDesktop(intent)
     }
