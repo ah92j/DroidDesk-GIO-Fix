@@ -58,7 +58,11 @@ object AndroidAppSync {
                 for (app in apps) {
                     val packageName = app.activityInfo.packageName
                     val appName = app.loadLabel(pm).toString()
-                    val safeAppName = appName.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim().ifEmpty { packageName }
+                                        val safeAppName = appName
+                        .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                        .replace(Regex("\\p{Cc}"), "_")
+                        .trim()
+                        .ifEmpty { packageName }
                     val iconDrawable = app.loadIcon(pm)
 
                     // 1. Save Icon
@@ -70,7 +74,7 @@ object AndroidAppSync {
                         [Desktop Entry]
                         Version=1.0
                         Type=Application
-                        Name=$appName
+                                                Name=${escapeDesktopEntryValue(appName)}
                         Comment=Launch Android App: $packageName
                         Icon=/root/.icons/android/$packageName.png
                         Exec=sh -c "echo '$packageName' > /tmp/android_intent_pipe"
@@ -125,6 +129,11 @@ object AndroidAppSync {
                 Log.e(TAG, "Failed to sync Android apps", e)
             }
         }
+    }
+        private fun escapeDesktopEntryValue(value: String): String {
+        return value
+            .replace(Regex("\\p{Cc}"), " ")
+            .replace("\\", "\\\\")
     }
 
     private fun saveIcon(drawable: Drawable, file: File) {
