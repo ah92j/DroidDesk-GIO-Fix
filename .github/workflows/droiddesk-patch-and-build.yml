@@ -185,6 +185,10 @@ jobs:
 
       - name: Generate Gradle wrapper
         working-directory: app/android
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
         run: gradle wrapper --gradle-version 8.14 --distribution-type all
 
       - name: Resolve Flutter packages
