@@ -675,56 +675,154 @@ class LinuxRuntime(private val context: Context) {
         }
     }
 
-    private fun restoreSymlinks(prefixDir: File) {
+        private fun restoreSymlinks(prefixDir: File) {
         val symlinksFile = File(prefixDir, "SYMLINKS.txt")
-        if (!symlinksFile.exists()) {
+        if (!symlinksFile.isFile) {
             Log.w(TAG, "SYMLINKS.txt not found, skipping symlink restoration")
             return
         }
 
+        val canonicalRoot = prefixDir.canonicalFile
+        val rootPath = canonicalRoot.path
+        val rootPrefix = rootPath + File.separator
         val termuxPrefix = "/data/data/com.termux/files/usr"
-        var created = 0
-        var failed = 0
-        symlinksFile.readLines().forEach { line ->
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) return@forEach
 
-            // Format: /data/data/com.termux/files/usr/.../target←./linkpath
-            val arrow = "\u2190"
-            val parts = trimmed.split(arrow)
-            if (parts.size != 2) return@forEach
+        val allowedExternalRoots = listOf(
+            "/system",
+            "/apex",
+            "/vendor",
+            "/product",
+            "/odm",
+            "/proc",
+            "/dev",
+            "/sys"
+        )
 
-            val targetPath = parts[0].trim()
-            val linkPath = parts[1].trim()
-
-            // linkPath is relative to prefix root (starts with ./)
-            val cleanLinkPath = if (linkPath.startsWith("./")) linkPath.substring(2) else linkPath
-            val linkFile = File(prefixDir, cleanLinkPath)
-
-            // Rewrite target from Termux prefix to app prefix;
-            // bare filenames are kept relative so the symlink resolves correctly.
-            val newTarget = when {
-                targetPath.startsWith(termuxPrefix) -> {
-                    prefixDir.absolutePath + targetPath.substring(termuxPrefix.length)
-                }
-                targetPath.startsWith("/") -> targetPath
-                else -> targetPath
-            }
-
-            try {
-                if (linkFile.exists()) {
-                    linkFile.deleteRecursively()
-                }
-                linkFile.parentFile?.mkdirs()
-                android.system.Os.symlink(newTarget, linkFile.absolutePath)
-                created++
-            } catch (e: Exception) {
-                failed++
-                Log.w(TAG, "Failed to create symlink ${linkFile.absolutePath} -> $newTarget: ${e.message}")
-            }
+        fun isInsidePrefix(file: File): Boolean {
+            val path = file.canonicalPath
+            return path == rootPath || path.startsWith(rootPrefix)
         }
 
-        Log.i(TAG, "Restored $created symlinks, $failed failed")
+        var created = 0
+
+        symlinksFile.readLines().forEachIndexed { index, line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) return@forEachIndexed
+
+            val arrow = "\u2190"
+            val arrowIndex = trimmed.indexOf(arrow)
+
+            if (arrowIndex <= 0 || arrowIndex != trimmed.lastIndexOf(arrow)) {
+                throw SecurityException("Malformed symlink entry at line ${index + 1}")
+            }
+
+            val targetPath = trimmed.substring(0, arrowIndex).trim()
+            val linkPath = trimmed.substring(arrowIndex + arrow.length).trim()
+
+            if (
+                targetPath.isBlank() ||
+                linkPath.isBlank() ||
+                targetPath.any { it.isISOControl() } ||
+                linkPath.any { it.isISOControl() } ||
+                targetPath.contains('\\') ||
+                linkPath.contains('\\')
+            ) {
+                throw SecurityException("Invalid symlink entry at line ${index + 1}")
+            }
+
+            if (!linkPath.startsWith("./")) {
+                throw SecurityException("Symlink path must be relative at line ${index + 1}")
+            }
+
+            val cleanLinkPath = linkPath.removePrefix("./")
+            val segments = cleanLinkPath.split('/')
+
+            if (
+                cleanLinkPath.isBlank() ||
+                segments.any { it.isBlank() || it == "." || it == ".." }
+            ) {
+                throw SecurityException("Unsafe symlink path at line ${index + 1}")
+            }
+
+            val linkFile = File(canonicalRoot, cleanLinkPath).canonicalFile
+
+            if (
+                linkFile.path == rootPath ||
+                !linkFile.path.startsWith(rootPrefix)
+            ) {
+                throw SecurityException("Symlink escaped prefix at line ${index + 1}")
+            }
+
+            val linkParent = linkFile.parentFile
+                ?: throw SecurityException("Symlink has no parent directory")
+
+            if (!linkParent.exists() && !linkParent.mkdirs()) {
+                throw IllegalStateException("Could not create symlink parent directory")
+            }
+
+            if (!linkParent.isDirectory) {
+                throw IllegalStateException("Symlink parent is not a directory")
+            }
+
+            if (
+                linkFile.exists() ||
+                java.nio.file.Files.isSymbolicLink(linkFile.toPath())
+            ) {
+                throw SecurityException("Symlink destination already exists")
+            }
+
+            val newTarget = when {
+                targetPath == termuxPrefix ||
+                    targetPath.startsWith("$termuxPrefix/") -> {
+
+                    val suffix = targetPath
+                        .removePrefix(termuxPrefix)
+                        .removePrefix("/")
+
+                    val mappedTarget = if (suffix.isEmpty()) {
+                        canonicalRoot
+                    } else {
+                        File(canonicalRoot, suffix).canonicalFile
+                    }
+
+                    if (!isInsidePrefix(mappedTarget)) {
+                        throw SecurityException("Symlink target escaped prefix")
+                    }
+
+                    mappedTarget.path
+                }
+
+                targetPath.startsWith("/") -> {
+                    val canonicalTarget = File(targetPath).canonicalFile
+
+                    val allowed = allowedExternalRoots.any {
+                        canonicalTarget.path == it ||
+                            canonicalTarget.path.startsWith(it + File.separator)
+                    }
+
+                    if (!allowed) {
+                        throw SecurityException("Blocked external symlink target")
+                    }
+
+                    canonicalTarget.path
+                }
+
+                else -> {
+                    val resolvedTarget = File(linkParent, targetPath).canonicalFile
+
+                    if (!isInsidePrefix(resolvedTarget)) {
+                        throw SecurityException("Relative symlink target escaped prefix")
+                    }
+
+                    targetPath
+                }
+            }
+
+            android.system.Os.symlink(newTarget, linkFile.absolutePath)
+            created++
+        }
+
+        Log.i(TAG, "Restored $created symlinks")
     }
 
     // ── Shebang Patching ──
