@@ -322,7 +322,9 @@ class _SetupProgressScreenState extends State<SetupProgressScreen> {
         active: false,
       ),
       _ChecklistItem(
-        label: isChroot ? 'Download Ubuntu rootfs' : 'Install native packages',
+        label: isChroot
+            ? 'Download ${state.selectedDistro == "kali" ? "Kali Linux" : "Ubuntu"} rootfs'
+            : 'Install native packages',
         done: state.downloadProgress >= 1.0,
         active: state.isDownloading,
         progress: state.isDownloading ? state.downloadProgress : null,
