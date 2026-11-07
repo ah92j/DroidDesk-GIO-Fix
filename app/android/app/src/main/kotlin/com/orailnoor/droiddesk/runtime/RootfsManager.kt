@@ -7,6 +7,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import kotlin.concurrent.thread
 
@@ -35,6 +36,11 @@ class RootfsManager(private val context: Context) {
             "ubuntu" to "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-arm64.tar.gz",
             "alpine" to "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/alpine-minirootfs-3.20.0-aarch64.tar.gz",
             "kali" to "https://kali.download/nethunter-images/current/rootfs/kali-nethunter-rootfs-minimal-arm64.tar.xz"
+        )
+        val DISTRO_SHA256 = mapOf(
+            "ubuntu" to "04207713ece899c3740823d33690441ad3a7f0ded1101aca744e2b0f37ac7ff2",
+            "alpine" to "83a79199bf3112c65e62ddf1732b051daf62ed2ddf5a8413c440dc25956116f0",
+            "kali" to "96aeced81a857a987715a14417af05c2934e3e19052d6151c398a1c215448b60"
         )
 
         val DISTRO_NAMES = mapOf(
@@ -155,7 +161,7 @@ class RootfsManager(private val context: Context) {
                     }
                     downloadFromConnection(connection, targetFile, distroName, downloadedBytes, onProgress)
                 }
-                                verifySha256(
+                verifySha256(
                     targetFile,
                     DISTRO_SHA256[distro]
                         ?: throw IllegalStateException("Missing SHA-256 for $distro")
@@ -173,6 +179,46 @@ class RootfsManager(private val context: Context) {
             }
         }
     }
+    private fun verifySha256(file: File, expectedSha256: String) {
+        if (!file.isFile) {
+            throw IllegalStateException("Downloaded rootfs file is missing")
+        }
+
+        if (!expectedSha256.matches(Regex("^[a-fA-F0-9]{64}$"))) {
+            throw IllegalArgumentException("Invalid expected SHA-256")
+        }
+
+        val digest = MessageDigest.getInstance("SHA-256")
+
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+
+            while (true) {
+                val bytesRead = input.read(buffer)
+                if (bytesRead < 0) break
+
+                digest.update(buffer, 0, bytesRead)
+            }
+        }
+
+        val actualSha256 = digest.digest().joinToString("") {
+            "%02x".format(it.toInt() and 0xff)
+        }
+
+        if (!actualSha256.equals(expectedSha256, ignoreCase = true)) {
+            if (!file.delete()) {
+                throw SecurityException(
+                    "SHA-256 mismatch and invalid file could not be deleted"
+                )
+            }
+
+            throw SecurityException(
+                "SHA-256 verification failed. Downloaded file was removed."
+            )
+        }
+
+        Log.i(TAG, "Rootfs SHA-256 verification passed")
+        }
 
     private fun downloadFromConnection(
         connection: HttpURLConnection,
