@@ -35,6 +35,7 @@ class AppState extends ChangeNotifier {
   String _optionalInstallStatus = '';
   String _optionalInstallLog = '';
   bool _isProotTerminal = false;
+  String _prootTerminalName = 'Debian PRoot';
 
   // Terminal history
   final List<String> _terminalOutput = [
@@ -85,6 +86,7 @@ class AppState extends ChangeNotifier {
   String get optionalInstallStatus => _optionalInstallStatus;
   String get optionalInstallLog => _optionalInstallLog;
   bool get isProotTerminal => _isProotTerminal;
+  String get prootTerminalName => _prootTerminalName;
 
   bool get isSetupComplete => _isBootstrapped && _installedDE.isNotEmpty;
   bool get isDEInstalled => _installedDE.isNotEmpty;
@@ -354,17 +356,47 @@ class AppState extends ChangeNotifier {
     _extractProgress = 0.08;
     _extractStatus = 'Bootstrap environment ready';
     _statusMessage = _extractStatus;
+    _isExtracting = false;
+
+    if (_selectedDistro == 'kali') {
+      _statusMessage = 'Downloading Kali Linux into DroidDesk...';
+      _isDownloading = true;
+      _downloadProgress = 0.0;
+      notifyListeners();
+      if (!await DroidDeskPlatform.downloadRootfs('kali')) {
+        throw StateError('Kali Linux download failed');
+      }
+
+      _isDownloading = false;
+      _isExtracting = true;
+      _extractProgress = 0.0;
+      _statusMessage = 'Extracting Kali Linux inside DroidDesk...';
+      notifyListeners();
+      if (!await DroidDeskPlatform.extractRootfs()) {
+        throw StateError('Kali Linux extraction failed');
+      }
+
+      _isExtracting = false;
+      _isInstallingDE = true;
+      _statusMessage = 'Installing Kali desktop through DroidDesk PRoot...';
+      notifyListeners();
+      if (!await DroidDeskPlatform.installKaliProotDesktop()) {
+        throw StateError('Kali PRoot desktop installation failed');
+      }
+      _isInstallingDE = false;
+      await refreshStatus();
+      return;
+    }
+
+    _statusMessage = 'Installing native desktop environment...';
     _isInstallingDE = true;
     notifyListeners();
-    final installed = await DroidDeskPlatform.installDesktopNative(
-      de: _selectedDE,
-    );
+    final installed = await DroidDeskPlatform.installDesktopNative(de: _selectedDE);
     if (!installed) {
-      throw StateError('Native Termux package installation failed');
+      throw StateError('Native desktop package installation failed');
     }
     _isExtracting = false;
     _isInstallingDE = false;
-
     await refreshStatus();
   }
 
@@ -817,8 +849,16 @@ class AppState extends ChangeNotifier {
 
   Future<void> startDebianShell() async {
     _isProotTerminal = true;
+    _prootTerminalName = 'Debian PRoot';
     clearTerminal();
     await executeCommand('start-debian');
+  }
+
+  Future<void> startKaliShell() async {
+    _isProotTerminal = true;
+    _prootTerminalName = 'Kali Linux · PRoot';
+    clearTerminal();
+    await executeCommand('start-kali');
   }
 
   void appendTerminalOutput(String output) {
