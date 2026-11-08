@@ -116,4 +116,6 @@ flutter {
 dependencies {
     // Pure-Java XZ decoder for Android-safe Kali rootfs extraction.
     implementation("org.tukaani:xz:1.12")
+    implementation("org.apache.commons:commons-compress:1.28.0")
+    testImplementation("junit:junit:4.13.2")
 }
