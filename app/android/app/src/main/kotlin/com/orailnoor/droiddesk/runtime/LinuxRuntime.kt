@@ -201,7 +201,7 @@ class LinuxRuntime(private val context: Context) {
         }.getOrDefault(false)
     }
 
-    /** Install XFCE in DroidDesk's private Kali rootfs without su/chroot or Termux storage. */
+    /** Install Kali's default toolset and XFCE in DroidDesk's private rootfs without su/chroot or Termux. */
     fun installKaliProotDesktop(
         rootfs: File,
         onProgress: (Double, String) -> Unit,
@@ -274,7 +274,7 @@ class LinuxRuntime(private val context: Context) {
                     "/usr/bin/env", "-i", "HOME=/root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "LANG=C.UTF-8", "/bin/bash", "-lc",
-                    "dpkg-query -W -f='\\${Status}' kali-linux-default | grep -qx 'install ok installed' && " +
+                    "dpkg-query -W -f='\${Status}' kali-linux-default | grep -qx 'install ok installed' && " +
                         "test -x /usr/bin/startxfce4 && test -x /usr/bin/dbus-launch",
                 ),
                 2, onLog,
@@ -292,7 +292,6 @@ class LinuxRuntime(private val context: Context) {
             writeKaliLauncher(rootfs)
             onProgress(1.0, "Kali default tools and XFCE installed inside DroidDesk")
             Log.i(TAG, "Rootless Kali default toolset and XFCE installed: ${rootfs.absolutePath}")
-            true
             true
         } catch (error: Exception) {
             Log.e(TAG, "Rootless Kali desktop installation failed", error)
