@@ -318,6 +318,37 @@ class AppState extends ChangeNotifier {
   /// rooted-device dialog.
   Future<void> runSetup({bool? useRoot}) async {
     try {
+      // Reopen the existing Kali operation instead of launching a second
+      // apt/dpkg transaction when the user returns to the installer route.
+      if (_selectedDistro == 'kali' && useRoot == false) {
+        final runtimeStatus = await DroidDeskPlatform.getRuntimeStatus();
+        if (runtimeStatus['distro'] == 'kali-proot') {
+          await refreshStatus();
+          _setupStep = 4;
+          _isInstallingDE = false;
+          notifyListeners();
+          return;
+        }
+
+        final kaliOperation = await DroidDeskPlatform.getKaliInstallStatus();
+        if (kaliOperation['running'] == true) {
+          _setupStep = 3;
+          _isDownloading = false;
+          _isExtracting = false;
+          _isInstallingDE = true;
+          _errorMessage = null;
+          _statusMessage = kaliOperation['status']?.toString() ??
+              'Kali setup is still running inside DroidDesk...';
+          _extractStatus = _statusMessage!;
+          final currentProgress = kaliOperation['progress'];
+          if (currentProgress is num && currentProgress >= 0) {
+            _extractProgress = currentProgress.toDouble();
+          }
+          notifyListeners();
+          return;
+        }
+      }
+
       _errorMessage = null;
       _setupLog = '';
       _setupStep = 3;
