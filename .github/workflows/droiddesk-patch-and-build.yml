@@ -16,6 +16,9 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizer.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
+      - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
       - 'app/lib/services/platform_bridge.dart'
@@ -50,6 +53,12 @@ jobs:
           rootfs_manager = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
           ).read_text()
+          archive_sanitizer = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizer.kt'
+          ).read_text()
+          archive_validator = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
+          ).read_text()
           gradle_app = Path('app/android/app/build.gradle.kts').read_text()
           audio_output = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
@@ -71,6 +80,9 @@ jobs:
           ).read_text()
           pubspec = Path('app/pubspec.yaml').read_text()
           manifest = Path('app/android/app/src/main/AndroidManifest.xml').read_text()
+          archive_tests = Path(
+              'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
+          ).read_text()
 
           required_runtime = [
               'env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"',
@@ -137,20 +149,48 @@ jobs:
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
-          required_xz = [
-              'org.tukaani.xz.XZInputStream',
-              'private fun runXzTarProcess(',
-              'tarArguments = listOf("-t", "-f", "-")',
-              'tarArguments = listOf("-x", "-f", "-", "-C", stagingRootfsDir.absolutePath)',
+          required_archive_manager = [
+              'RootfsArchiveSanitizer.sanitize(',
+              'ArchivePathValidator.normalizeEntryName(name, stripLeadingParents = false)',
+              'MAX_EXPANDED_ARCHIVE_BYTES',
+              'sanitizedArchive?.let',
           ]
-          missing.extend(item for item in required_xz if item not in rootfs_manager)
+          required_archive_sanitizer = [
+              'TarArchiveInputStream(decoded, "UTF-8")',
+              'XZInputStream(rawInput)',
+              'ArchivePathValidator.validateSymbolicLinkTarget(',
+              'sourceEntry.isCharacterDevice',
+              'sourceEntry.isFIFO',
+              'maxExpandedBytes',
+          ]
+          required_archive_validator = [
+              'fun normalizeEntryName(',
+              'fun validateSymbolicLinkTarget(',
+              'MAX_COMPONENT_BYTES',
+              'MAX_PATH_BYTES',
+          ]
+          missing.extend(item for item in required_archive_manager if item not in rootfs_manager)
+          missing.extend(item for item in required_archive_sanitizer if item not in archive_sanitizer)
+          missing.extend(item for item in required_archive_validator if item not in archive_validator)
+          if '@Test' not in archive_tests or 'rejectsTraversalThatWouldEscapeTheRoot' not in archive_tests:
+              missing.append('archive path validator unit tests')
           if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
               missing.append('org.tukaani:xz:1.12 dependency')
-          if 'listFlags = if (xzArchive) "tJf"' in rootfs_manager:
-              missing.append('external xz invocation still present in rootfs extraction')
+          if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
+              missing.append('Apache Commons Compress 1.28.0 dependency')
 
-          if 'version: 1.3.9+14' not in pubspec:
-              missing.append('version: 1.3.7+12')
+          required_kali = [
+              'kali-linux-default xfce4',
+              'apt-get update &&',
+              'minimumFreeBytes = 15L * 1024L * 1024L * 1024L',
+              'File(rootfs, ".kali_default_tools_installed")',
+          ]
+          missing.extend(item for item in required_kali if item not in runtime)
+          if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
+              missing.append('Kali install must start the DroidDesk foreground service')
+
+          if 'version: 1.4.0+15' not in pubspec:
+              missing.append('version: 1.4.0+15')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
@@ -238,6 +278,11 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Run rootfs archive path safety tests
+        working-directory: app/android
+        shell: bash
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
       - name: Build ARM64 release APK
         working-directory: app
         shell: bash
@@ -288,7 +333,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.3.9-arm64
+          name: DroidDesk-1.4.0-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
