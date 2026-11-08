@@ -41,7 +41,6 @@ APT_PACKAGES=(
   dbus-x11
   xclip
   x11-utils
-  papirus-icon-theme
   fonts-noto-core
 )
 
@@ -53,6 +52,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::ForceIPv4=true"* ]]
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Peer=true"* ]]
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Host=true"* ]]
+  [[ " ${APT_OPTIONS[*]} " == *"APT::Keep-Downloaded-Packages=true"* ]]
   printf '%s\n' "[DroidDesk Kali] APT setup configuration checks passed."
   exit 0
 fi
@@ -113,6 +113,22 @@ run_with_package_heartbeat() {
   kill "$heartbeat_pid" 2>/dev/null || true
   wait "$heartbeat_pid" 2>/dev/null || true
   return "$command_status"
+}
+
+recover_optional_stalled_theme() {
+  # Papirus is an optional visual add-on, not required by Kali/XFCE.
+  # If an older attempt left it half-configured, remove that incomplete
+  # optional package so it cannot block recovery of the actual desktop.
+  local package_status
+  package_status="$(dpkg-query -W -f='${Status}' papirus-icon-theme 2>/dev/null || true)"
+  case "$package_status" in
+    *unpacked|*half-configured|*half-installed)
+      echo "[DroidDesk Kali] Removing the incomplete optional Papirus icon theme before resuming core packages."
+      dpkg --remove --force-remove-reinstreq papirus-icon-theme
+      ;;
+    *)
+      ;;
+  esac
 }
 
 prepare_apt_directories() {
@@ -210,6 +226,12 @@ run_apt_transaction() {
     return 1
   fi
 
+  # Recover the optional icon theme separately from the core Kali/XFCE setup.
+  if ! recover_optional_stalled_theme; then
+    echo "[DroidDesk Kali] Could not clear the incomplete optional icon theme."
+    return 1
+  fi
+
   # Complete packages unpacked by an earlier interrupted attempt.
   if ! run_with_package_heartbeat "resuming dpkg configuration" dpkg --configure -a; then
     echo "[DroidDesk Kali] Repairing the interrupted dpkg transaction..."
@@ -245,6 +267,7 @@ for repository_uri in "$KALI_PRIMARY" "$KALI_FALLBACK"; do
   fi
 
   echo "[DroidDesk Kali] Repository attempt failed; preserving completed downloads and repairing dpkg state..."
+  recover_optional_stalled_theme || true
   run_with_package_heartbeat "recovering dpkg after repository failure" dpkg --configure -a || true
   prepare_apt_directories || true
 done
