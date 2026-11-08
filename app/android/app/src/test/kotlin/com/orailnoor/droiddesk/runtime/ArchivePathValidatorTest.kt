@@ -101,6 +101,30 @@ class ArchivePathValidatorTest {
     }
 
     @Test
+    fun convertsArchiveHardlinkTargetToSafeRelativeSymlinkPath() {
+        assertEquals(
+            "halt",
+            ArchivePathValidator.relativeSymlinkTarget(
+                "usr/lib/klibc/bin/reboot",
+                "usr/lib/klibc/bin/halt",
+            ),
+        )
+        assertEquals(
+            "../lib/systemd/system/example.slice",
+            ArchivePathValidator.relativeSymlinkTarget(
+                "usr/bin/example",
+                "usr/lib/systemd/system/example.slice",
+            ),
+        )
+        assertThrows(SecurityException::class.java) {
+            ArchivePathValidator.relativeSymlinkTarget(
+                "usr/bin/example",
+                "../../../../etc/passwd",
+            )
+        }
+    }
+
+    @Test
     fun rejectsRelativeSymlinkThatEscapesRoot() {
         assertThrows(SecurityException::class.java) {
             ArchivePathValidator.validateSymbolicLinkTarget("usr/bin/tool", "../../../../data")
