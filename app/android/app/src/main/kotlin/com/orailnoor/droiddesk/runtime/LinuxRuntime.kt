@@ -241,7 +241,7 @@ class LinuxRuntime(private val context: Context) {
                 listOf(
                     "/usr/bin/env", "-i", "HOME=/root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                    "LANG=C.UTF-8", "/bin/bash", "-lc",
+                    "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null", "/bin/bash", "-c",
                     "test -x /bin/bash && test -x /usr/bin/apt-get && test -x /usr/bin/sudo",
                 ),
                 2, onLog,
@@ -279,8 +279,8 @@ class LinuxRuntime(private val context: Context) {
                 listOf(
                     "/usr/bin/env", "-i", "HOME=/root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                    "TERM=xterm-256color", "LANG=C.UTF-8", "DEBIAN_FRONTEND=noninteractive",
-                    "/bin/bash", "-lc", "/bin/bash /root/.droiddesk/setup-kali-default.sh",
+                    "TERM=dumb", "LANG=C.UTF-8", "DEBIAN_FRONTEND=noninteractive", "BASH_ENV=/dev/null",
+                    "/bin/bash", "-c", "/bin/bash /root/.droiddesk/setup-kali-default.sh",
                 ),
                 240, onLog,
             )
@@ -297,7 +297,7 @@ class LinuxRuntime(private val context: Context) {
                 listOf(
                     "/usr/bin/env", "-i", "HOME=/root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                    "LANG=C.UTF-8", "/bin/bash", "-lc",
+                    "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null", "/bin/bash", "-c",
                     "dpkg-query -W -f='\${Status}' kali-linux-default | grep -qx 'install ok installed' && " +
                         "test -x /usr/bin/startxfce4 && test -x /usr/bin/dbus-launch",
                 ),
