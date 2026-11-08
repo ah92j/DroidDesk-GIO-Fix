@@ -3,6 +3,7 @@ package com.orailnoor.droiddesk.runtime
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
+import org.apache.commons.compress.archivers.tar.TarConstants
 import org.tukaani.xz.XZInputStream
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -15,7 +16,9 @@ import java.util.zip.GZIPInputStream
  * Rewrites a downloaded rootfs tarball into a safe, normalized tar archive.
  * The original archive is SHA-256 verified before this component is called.
  *
- * It preserves ordinary files, directories, symlinks and hardlinks. Device
+ * It preserves ordinary files, directories and symlinks. Hardlinks are
+ * rewritten as equivalent rootfs-relative symlinks because Android may deny
+ * hardlink(2) during extraction in an application sandbox. Device
  * nodes and FIFOs are omitted because Android does not allow an unprivileged
  * app to create them; DroidDesk bind-mounts Android /dev and /dev/shm at runtime.
  */
@@ -104,7 +107,34 @@ internal object RootfsArchiveSanitizer {
                                     continue
                                 }
 
-                                val outputEntry = copyMetadata(sourceEntry, normalizedName)
+                                val hardLinkTarget = if (sourceEntry.isLink) {
+                                    val archiveLinkTarget = ArchivePathValidator.normalizeEntryName(
+                                        sourceEntry.linkName,
+                                        stripLeadingParents = false,
+                                    )
+                                    val normalizedTarget = stripTopLevelDirectory?.let { expectedRoot ->
+                                        ArchivePathValidator.stripExpectedArchiveRootFromHardLink(
+                                            archiveLinkTarget,
+                                            expectedRoot,
+                                        )
+                                    } ?: archiveLinkTarget
+                                    if (normalizedTarget.isEmpty()) {
+                                        throw SecurityException("Hardlink target resolves to the extraction root")
+                                    }
+                                    normalizedTarget
+                                } else {
+                                    null
+                                }
+
+                                // Android application sandboxes can reject hardlink(2)
+                                // even when both paths are inside filesDir. Preserve
+                                // guest filesystem paths and contents by using a
+                                // relative symlink to the same rootfs target instead.
+                                val outputEntry = if (hardLinkTarget != null) {
+                                    copyMetadata(sourceEntry, normalizedName, TarConstants.LF_SYMLINK)
+                                } else {
+                                    copyMetadata(sourceEntry, normalizedName)
+                                }
 
                                 when {
                                     sourceEntry.isSymbolicLink -> {
@@ -116,21 +146,18 @@ internal object RootfsArchiveSanitizer {
                                         )
                                         links++
                                     }
-                                    sourceEntry.isLink -> {
-                                        val archiveLinkTarget = ArchivePathValidator.normalizeEntryName(
-                                            sourceEntry.linkName,
-                                            stripLeadingParents = false,
+                                    hardLinkTarget != null -> {
+                                        val relativeTarget = ArchivePathValidator.relativeSymlinkTarget(
+                                            normalizedName,
+                                            hardLinkTarget,
                                         )
-                                        val linkTarget = stripTopLevelDirectory?.let { expectedRoot ->
-                                            ArchivePathValidator.stripExpectedArchiveRootFromHardLink(
-                                                archiveLinkTarget,
-                                                expectedRoot,
+                                        outputEntry.setLinkName(
+                                            ArchivePathValidator.validateSymbolicLinkTarget(
+                                                normalizedName,
+                                                relativeTarget,
                                             )
-                                        } ?: archiveLinkTarget
-                                        if (linkTarget.isEmpty()) {
-                                            throw SecurityException("Hardlink target resolves to the extraction root")
-                                        }
-                                        outputEntry.setLinkName(linkTarget)
+                                        )
+                                        outputEntry.setSize(0)
                                         links++
                                     }
                                     isDirectory -> directories++
@@ -162,8 +189,12 @@ internal object RootfsArchiveSanitizer {
         }
     }
 
-    private fun copyMetadata(source: TarArchiveEntry, normalizedName: String): TarArchiveEntry {
-        val result = TarArchiveEntry(normalizedName, source.linkFlag)
+    private fun copyMetadata(
+        source: TarArchiveEntry,
+        normalizedName: String,
+        outputType: Byte = source.linkFlag,
+    ): TarArchiveEntry {
+        val result = TarArchiveEntry(normalizedName, outputType)
         result.setMode(source.mode)
         result.setUserId(source.longUserId)
         result.setGroupId(source.longGroupId)
