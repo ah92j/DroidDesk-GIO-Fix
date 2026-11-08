@@ -167,7 +167,7 @@ jobs:
           missing.extend(item for item in required_updater if item not in updater)
           if 'KaliProotCommandLine.build(' not in runtime:
               missing.append('Kali PRoot command builder integration')
-          if 'KaliProotCommandLine.build(' not in proot_builder or 'addAll(guestCommand)' not in proot_builder:
+          if 'fun build(' not in proot_builder or 'addAll(guestCommand)' not in proot_builder:
               missing.append('Kali PRoot command builder implementation')
           if 'workingDirectory, "--"' in runtime or '-w /home/kali --' in runtime:
               missing.append('unsupported -- delimiter in a Kali PRoot launch path')
