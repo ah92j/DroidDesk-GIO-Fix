@@ -207,11 +207,27 @@ class LinuxRuntime(private val context: Context) {
         onProgress: (Double, String) -> Unit,
         onLog: (String) -> Unit = {},
     ): Boolean {
+        if (!KaliInstallCoordinator.tryStart()) {
+            val active = KaliInstallCoordinator.snapshot()
+            val currentStatus = active["status"]?.toString() ?: "Kali setup is already running"
+            onProgress(
+                (active["progress"] as? Number)?.toDouble() ?: 0.0,
+                "Kali setup is already running: $currentStatus",
+            )
+            return false
+        }
+
+        var succeeded = false
+        val report: (Double, String) -> Unit = { value, message ->
+            KaliInstallCoordinator.report(value, message)
+            onProgress(value, message)
+        }
+
         return try {
             if (!isBootstrapped()) throw IllegalStateException("DroidDesk Linux bootstrap is not ready")
             if (!isManagedKaliRootfs(rootfs)) throw SecurityException("The private rootfs is not a verified Kali installation")
 
-            onProgress(0.04, "Preparing DroidDesk PRoot runtime...")
+            report(0.04, "Preparing DroidDesk PRoot runtime...")
             if (!installOptionalPackages(listOf("proot"), onProgress, 0.12)) {
                 throw IllegalStateException("Could not install PRoot inside DroidDesk")
             }
@@ -219,7 +235,7 @@ class LinuxRuntime(private val context: Context) {
             relocateProotExecutable()
             configureKaliDns(rootfs)
 
-            onProgress(0.16, "Checking Kali rootless runtime...")
+            report(0.16, "Checking Kali rootless runtime...")
             val preflight = runKaliProotCommand(
                 rootfs, "/root",
                 listOf(
@@ -244,7 +260,7 @@ class LinuxRuntime(private val context: Context) {
                 )
             }
 
-            onProgress(0.18, "Preparing the embedded Kali deployment script...")
+            report(0.18, "Preparing the embedded Kali deployment script...")
             val scriptDirectory = File(rootfs, "root/.droiddesk")
             if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
                 throw IllegalStateException("Could not create Kali deployment-script directory")
@@ -257,7 +273,7 @@ class LinuxRuntime(private val context: Context) {
                 throw IllegalStateException("Could not mark the Kali deployment script executable")
             }
 
-            onProgress(0.20, "Installing Kali default tools and XFCE...")
+            report(0.20, "Installing Kali default tools and XFCE...")
             val install = runKaliProotCommand(
                 rootfs, "/root",
                 listOf(
@@ -275,7 +291,7 @@ class LinuxRuntime(private val context: Context) {
                 )
             }
 
-            onProgress(0.92, "Verifying Kali default tools and desktop...")
+            report(0.92, "Verifying Kali default tools and desktop...")
             val verify = runKaliProotCommand(
                 rootfs, "/root",
                 listOf(
@@ -298,13 +314,16 @@ class LinuxRuntime(private val context: Context) {
             File(rootfs, ".chroot_de_installed").writeText("xfce4\n")
             File(rootfs, ".kali_default_tools_installed").writeText("kali-linux-default\n")
             writeKaliLauncher(rootfs)
-            onProgress(1.0, "Kali default tools and XFCE installed inside DroidDesk")
+            report(1.0, "Kali default tools and XFCE installed inside DroidDesk")
             Log.i(TAG, "Rootless Kali default toolset and XFCE installed: ${rootfs.absolutePath}")
+            succeeded = true
             true
         } catch (error: Exception) {
             Log.e(TAG, "Rootless Kali desktop installation failed", error)
-            onProgress(-1.0, error.message ?: "Kali PRoot installation failed")
+            report(-1.0, error.message ?: "Kali PRoot installation failed")
             false
+        } finally {
+            KaliInstallCoordinator.finish(succeeded)
         }
     }
 
