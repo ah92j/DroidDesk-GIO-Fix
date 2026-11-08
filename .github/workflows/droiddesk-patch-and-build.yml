@@ -20,6 +20,7 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
       - 'app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
+      - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizerTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
       - 'app/lib/services/platform_bridge.dart'
@@ -86,6 +87,9 @@ jobs:
           manifest = Path('app/android/app/src/main/AndroidManifest.xml').read_text()
           archive_tests = Path(
               'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
+          ).read_text()
+          sanitizer_tests = Path(
+              'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizerTest.kt'
           ).read_text()
 
           required_runtime = [
@@ -188,6 +192,10 @@ jobs:
               missing.append('systemd escaped filename unit test')
           if 'stripsKaliArchiveRootAndRejectsMembersOutsideIt' not in archive_tests:
               missing.append('Kali archive root normalization unit test')
+          if 'stripsKaliArchiveFolderAndPreservesSystemdEscapedFilename' not in sanitizer_tests:
+              missing.append('Kali root archive sanitizer integration test')
+          if 'rejectsKaliArchiveMembersOutsideTheExpectedRoot' not in sanitizer_tests:
+              missing.append('Kali archive root isolation integration test')
           if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
               missing.append('org.tukaani:xz:1.12 dependency')
           if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
