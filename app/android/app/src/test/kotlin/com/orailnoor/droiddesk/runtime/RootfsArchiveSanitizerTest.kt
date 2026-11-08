@@ -10,6 +10,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.tukaani.xz.LZMA2Options
+import org.tukaani.xz.XZOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -20,25 +22,19 @@ class RootfsArchiveSanitizerTest {
     fun stripsKaliArchiveFolderAndPreservesSystemdEscapedFilename() {
         val tempDirectory = Files.createTempDirectory("droiddesk-kali-archive-test").toFile()
         try {
-            val source = File(tempDirectory, "source.tar")
+            val sourceTar = File(tempDirectory, "source.tar")
+            val sourceXz = File(tempDirectory, "source.tar.xz")
             val sanitized = File(tempDirectory, "sanitized.tar")
             val payload = "systemd-unit-test".toByteArray()
             val escapedName =
                 "kali-arm64/usr/lib/systemd/system/systemd\\x2dmute\\x2dconsole.slice"
 
-            TarArchiveOutputStream(FileOutputStream(source)).use { tar ->
-                val file = TarArchiveEntry(escapedName)
-                file.mode = 0b110100100
-                file.size = payload.size.toLong()
-                tar.putArchiveEntry(file)
-                tar.write(payload)
-                tar.closeArchiveEntry()
-            }
+            writeXzTar(sourceTar, sourceXz, escapedName, payload)
 
             val result = RootfsArchiveSanitizer.sanitize(
-                sourceArchive = source,
+                sourceArchive = sourceXz,
                 targetTar = sanitized,
-                xzCompressed = false,
+                xzCompressed = true,
                 stripTopLevelDirectory = "kali-arm64",
                 maxEntries = 100,
                 maxExpandedBytes = 1024 * 1024,
@@ -69,20 +65,17 @@ class RootfsArchiveSanitizerTest {
     fun rejectsKaliArchiveMembersOutsideTheExpectedRoot() {
         val tempDirectory = Files.createTempDirectory("droiddesk-kali-archive-invalid").toFile()
         try {
-            val source = File(tempDirectory, "source.tar")
+            val sourceTar = File(tempDirectory, "source.tar")
+            val sourceXz = File(tempDirectory, "source.tar.xz")
             val sanitized = File(tempDirectory, "sanitized.tar")
-            val file = TarArchiveEntry("ubuntu/etc/passwd")
-            file.size = 0
-            TarArchiveOutputStream(FileOutputStream(source)).use { tar ->
-                tar.putArchiveEntry(file)
-                tar.closeArchiveEntry()
-            }
+
+            writeXzTar(sourceTar, sourceXz, "ubuntu/etc/passwd", byteArrayOf())
 
             assertThrows(SecurityException::class.java) {
                 RootfsArchiveSanitizer.sanitize(
-                    sourceArchive = source,
+                    sourceArchive = sourceXz,
                     targetTar = sanitized,
-                    xzCompressed = false,
+                    xzCompressed = true,
                     stripTopLevelDirectory = "kali-arm64",
                     maxEntries = 100,
                     maxExpandedBytes = 1024 * 1024,
@@ -92,6 +85,26 @@ class RootfsArchiveSanitizerTest {
             assertFalse(sanitized.exists())
         } finally {
             tempDirectory.deleteRecursively()
+        }
+    }
+
+    private fun writeXzTar(
+        tarFile: File,
+        xzFile: File,
+        entryName: String,
+        payload: ByteArray,
+    ) {
+        TarArchiveOutputStream(FileOutputStream(tarFile)).use { tar ->
+            val entry = TarArchiveEntry(entryName)
+            entry.mode = 0b110100100
+            entry.size = payload.size.toLong()
+            tar.putArchiveEntry(entry)
+            tar.write(payload)
+            tar.closeArchiveEntry()
+        }
+
+        XZOutputStream(FileOutputStream(xzFile), LZMA2Options()).use { xz ->
+            FileInputStream(tarFile).use { input -> input.copyTo(xz) }
         }
     }
 }
