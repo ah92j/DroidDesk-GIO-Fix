@@ -13,6 +13,7 @@ import android.net.Uri
 import android.provider.Settings
 import com.orailnoor.droiddesk.service.DroidDeskService
 import com.orailnoor.droiddesk.runtime.LinuxRuntime
+import com.orailnoor.droiddesk.runtime.KaliInstallCoordinator
 import com.orailnoor.droiddesk.runtime.ChrootRuntime
 import com.orailnoor.droiddesk.runtime.RootShell
 import com.orailnoor.droiddesk.runtime.AndroidAppBridge
