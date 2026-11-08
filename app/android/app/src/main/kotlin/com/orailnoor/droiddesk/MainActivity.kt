@@ -416,6 +416,9 @@ class MainActivity : FlutterActivity() {
 
                 "installKaliProotDesktop" -> {
                     installThread("install-kali-proot-desktop") {
+                        // Keep the setup notification visible while the large Kali
+                        // package transaction runs, even if the user switches apps.
+                        startForegroundService()
                         linuxRuntime.setInstallLogSink { chunk -> appendTerminalOutput(chunk) }
                         try {
                             val ok = linuxRuntime.installKaliProotDesktop(
@@ -1120,7 +1123,7 @@ class MainActivity : FlutterActivity() {
      */
     private fun installThread(name: String, block: () -> Unit) = thread(name = name) {
         if (installOperations.getAndIncrement() == 0) {
-            installWakeLock.acquire(2 * 60 * 60 * 1000L)
+            installWakeLock.acquire(4 * 60 * 60 * 1000L)
             runOnUiThread { window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         }
         try {
