@@ -155,13 +155,15 @@ jobs:
           missing.extend(item for item in required_updater if item not in updater)
           required_archive_manager = [
               'RootfsArchiveSanitizer.sanitize(',
-              'ArchivePathValidator.normalizeEntryName(name, stripLeadingParents = false)',
+              'stripTopLevelDirectory = if (distro == "kali") "kali-arm64" else null',
               'MAX_EXPANDED_ARCHIVE_BYTES',
               'sanitizedArchive?.let',
           ]
           required_archive_sanitizer = [
               'TarArchiveInputStream(decoded, "UTF-8")',
               'XZInputStream(rawInput)',
+              'stripTopLevelDirectory: String? = null',
+              'ArchivePathValidator.stripExpectedArchiveRoot(archiveEntryName, expectedRoot)',
               'ArchivePathValidator.validateSymbolicLinkTarget(',
               'sourceEntry.isCharacterDevice',
               'sourceEntry.isFIFO',
@@ -169,6 +171,8 @@ jobs:
           ]
           required_archive_validator = [
               'fun normalizeEntryName(',
+              'fun stripExpectedArchiveRoot(',
+              'fun stripExpectedArchiveRootFromHardLink(',
               'fun validateSymbolicLinkTarget(',
               'MAX_COMPONENT_BYTES',
               'MAX_PATH_BYTES',
@@ -180,6 +184,10 @@ jobs:
               missing.append('archive path validator unit tests')
           if 'rewritesGuestAbsoluteSymlinkAsRelativeLink' not in archive_tests:
               missing.append('absolute guest symlink unit test')
+          if 'acceptsSystemdEscapedUnitNamesContainingBackslashes' not in archive_tests:
+              missing.append('systemd escaped filename unit test')
+          if 'stripsKaliArchiveRootAndRejectsMembersOutsideIt' not in archive_tests:
+              missing.append('Kali archive root normalization unit test')
           if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
               missing.append('org.tukaani:xz:1.12 dependency')
           if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
@@ -203,7 +211,7 @@ jobs:
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
-          if 'version: 1.4.0+15' not in pubspec:
+          if 'version: 1.4.1+16' not in pubspec:
               missing.append('version: 1.4.0+15')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -351,7 +359,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.0-arm64
+          name: DroidDesk-1.4.1-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
