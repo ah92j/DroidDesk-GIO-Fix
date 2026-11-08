@@ -166,6 +166,8 @@ jobs:
           required_archive_sanitizer = [
               'TarArchiveInputStream(decoded, "UTF-8")',
               'XZInputStream(rawInput)',
+              'TarConstants.LF_SYMLINK',
+              'ArchivePathValidator.relativeSymlinkTarget(',
               'stripTopLevelDirectory: String? = null',
               'ArchivePathValidator.stripExpectedArchiveRoot(archiveEntryName, expectedRoot)',
               'ArchivePathValidator.validateSymbolicLinkTarget(',
@@ -196,6 +198,10 @@ jobs:
               missing.append('Kali root archive sanitizer integration test')
           if 'rejectsKaliArchiveMembersOutsideTheExpectedRoot' not in sanitizer_tests:
               missing.append('Kali archive root isolation integration test')
+          if 'rewritesKaliHardlinksAsRelativeSymlinksForAndroidExtraction' not in sanitizer_tests:
+              missing.append('Kali hardlink-to-symlink integration test')
+          if 'convertsArchiveHardlinkTargetToSafeRelativeSymlinkPath' not in archive_tests:
+              missing.append('rootfs hardlink relative-target unit test')
           if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
               missing.append('org.tukaani:xz:1.12 dependency')
           if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
@@ -219,7 +225,7 @@ jobs:
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
-          if 'version: 1.4.1+16' not in pubspec:
+          if 'version: 1.4.2+17' not in pubspec:
               missing.append('version: 1.4.0+15')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -367,7 +373,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.1-arm64
+          name: DroidDesk-1.4.2-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
