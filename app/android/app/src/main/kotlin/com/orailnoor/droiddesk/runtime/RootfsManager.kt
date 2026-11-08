@@ -483,6 +483,7 @@ class RootfsManager(private val context: Context) {
             }
 
             var extractionSucceeded = false
+            var sanitizedArchive: File? = null
             try {
                 val distro = getInstalledDistro()
                 if (distro !in DISTRO_URLS.keys) {
@@ -511,13 +512,14 @@ class RootfsManager(private val context: Context) {
 
                 val listingLog = File(context.cacheDir, "rootfs-archive-list.txt")
                 val extractionLog = File(context.cacheDir, "rootfs-extract.log")
-                val sanitizedArchive = File(context.cacheDir, "rootfs-${distro}-sanitized.tar")
+                val outputArchive = File(context.cacheDir, "rootfs-${distro}-sanitized.tar")
+                sanitizedArchive = outputArchive
                 val xzArchive = archive.extension.equals("xz", ignoreCase = true)
 
                 report(onProgress, 0.12, "Validating and normalizing archive paths...")
                 val sanitized = RootfsArchiveSanitizer.sanitize(
                     sourceArchive = archive,
-                    targetTar = sanitizedArchive,
+                    targetTar = outputArchive,
                     xzCompressed = xzArchive,
                     maxEntries = MAX_ARCHIVE_ENTRIES,
                     maxExpandedBytes = MAX_EXPANDED_ARCHIVE_BYTES,
@@ -532,7 +534,7 @@ class RootfsManager(private val context: Context) {
 
                 report(onProgress, 0.18, "Checking normalized archive entries...")
                 val listExit = runLoggedProcess(
-                    listOf("tar", "-t", "-f", sanitizedArchive.absolutePath),
+                    listOf("tar", "-t", "-f", outputArchive.absolutePath),
                     listingLog,
                     30L,
                 )
@@ -543,7 +545,7 @@ class RootfsManager(private val context: Context) {
 
                 report(onProgress, 0.24, "Extracting ${DISTRO_NAMES[distro]}...")
                 val extractExit = runLoggedProcess(
-                    listOf("tar", "-x", "-f", sanitizedArchive.absolutePath, "-C", stagingRootfsDir.absolutePath),
+                    listOf("tar", "-x", "-f", outputArchive.absolutePath, "-C", stagingRootfsDir.absolutePath),
                     extractionLog,
                     ARCHIVE_PROCESS_TIMEOUT_MINUTES,
                 )
@@ -579,8 +581,10 @@ class RootfsManager(private val context: Context) {
                 Log.e(TAG, "Rootfs extraction failed: ${error.message}", error)
                 report(onProgress, -1.0, "Extraction failed: ${error.message ?: "unknown error"}")
             } finally {
-                runCatching { deletePath(File(context.cacheDir, "rootfs-${getInstalledDistro()}-sanitized.tar")) }
-                    .onFailure { Log.w(TAG, "Could not remove sanitized rootfs archive", it) }
+                sanitizedArchive?.let { temporaryArchive ->
+                    runCatching { deletePath(temporaryArchive) }
+                        .onFailure { Log.w(TAG, "Could not remove sanitized rootfs archive", it) }
+                }
                 if (!extractionSucceeded) {
                     runCatching { deletePath(stagingRootfsDir) }
                 }
