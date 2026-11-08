@@ -24,7 +24,7 @@ jobs:
           DOWNLOAD_DIR="$RUNNER_TEMP/droiddesk-apk"
           mkdir -p "$DOWNLOAD_DIR"
 
-          gh run download 42494326384 \
+          gh run download 42495653917 \
             --repo ah92j/DroidDesk-GIO-Fix \
             --name DroidDesk-1.4.2-arm64 \
             --dir "$DOWNLOAD_DIR"
