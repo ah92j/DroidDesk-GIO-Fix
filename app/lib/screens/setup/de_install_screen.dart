@@ -120,6 +120,33 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
                     textAlign: TextAlign.center,
                   ).animate().fadeIn(delay: 200.ms),
 
+                  if (hasError)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: Container(
+                        constraints: const BoxConstraints(maxHeight: 132),
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: DroidTheme.error.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: DroidTheme.error.withValues(alpha: 0.45),
+                          ),
+                        ),
+                        child: SingleChildScrollView(
+                          child: SelectableText(
+                            state.errorMessage ?? 'Unknown installation error.',
+                            style: const TextStyle(
+                              color: Color(0xFFFF8A80),
+                              fontSize: 12,
+                              height: 1.45,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
                   const Spacer(flex: 1),
 
                   // ── Terminal Output Window ──
