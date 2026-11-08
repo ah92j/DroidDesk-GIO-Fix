@@ -76,9 +76,37 @@ internal object ArchivePathValidator {
         }
 
         if (target.startsWith("/")) {
-            val guestPath = target.removePrefix("/")
-            normalizeEntryName(guestPath, stripLeadingParents = false)
-            return target
+            // Keep the same guest-root destination but encode it as a relative
+            // symlink. This prevents the Android tar extractor from ever seeing
+            // an absolute link that could point into the host filesystem.
+            val guestComponents = normalizeEntryName(
+                target.removePrefix("/"),
+                stripLeadingParents = false,
+            ).split('/').filter { it.isNotEmpty() }
+            val parentComponents = entryName.substringBeforeLast('/', "")
+                .split('/').filter { it.isNotEmpty() }
+
+            var common = 0
+            while (
+                common < parentComponents.size &&
+                common < guestComponents.size &&
+                parentComponents[common] == guestComponents[common]
+            ) {
+                common++
+            }
+
+            val relative = buildList {
+                repeat(parentComponents.size - common) { add("..") }
+                addAll(guestComponents.drop(common))
+            }.joinToString("/").ifEmpty { "." }
+
+            val resolved = if (parentComponents.isEmpty()) {
+                relative
+            } else {
+                parentComponents.joinToString("/") + "/" + relative
+            }
+            normalizeEntryName(resolved, stripLeadingParents = false)
+            return relative
         }
 
         val parent = entryName.substringBeforeLast('/', "")
