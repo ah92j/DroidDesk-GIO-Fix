@@ -33,6 +33,7 @@ internal object RootfsArchiveSanitizer {
         sourceArchive: File,
         targetTar: File,
         xzCompressed: Boolean,
+        stripTopLevelDirectory: String? = null,
         maxEntries: Int,
         maxExpandedBytes: Long,
         bufferSize: Int,
@@ -76,7 +77,10 @@ internal object RootfsArchiveSanitizer {
                                         "Sparse rootfs archive entries are not supported: ${sourceEntry.name.take(200)}"
                                     )
                                 }
-                                val normalizedName = ArchivePathValidator.normalizeEntryName(sourceEntry.name)
+                                val archiveEntryName = ArchivePathValidator.normalizeEntryName(sourceEntry.name)
+                                val normalizedName = stripTopLevelDirectory?.let { expectedRoot ->
+                                    ArchivePathValidator.stripExpectedArchiveRoot(archiveEntryName, expectedRoot)
+                                } ?: archiveEntryName
                                 val isDirectory = sourceEntry.isDirectory
                                 if (normalizedName.isEmpty()) {
                                     if (isDirectory) continue
@@ -113,10 +117,16 @@ internal object RootfsArchiveSanitizer {
                                         links++
                                     }
                                     sourceEntry.isLink -> {
-                                        val linkTarget = ArchivePathValidator.normalizeEntryName(
+                                        val archiveLinkTarget = ArchivePathValidator.normalizeEntryName(
                                             sourceEntry.linkName,
                                             stripLeadingParents = false,
                                         )
+                                        val linkTarget = stripTopLevelDirectory?.let { expectedRoot ->
+                                            ArchivePathValidator.stripExpectedArchiveRootFromHardLink(
+                                                archiveLinkTarget,
+                                                expectedRoot,
+                                            )
+                                        } ?: archiveLinkTarget
                                         if (linkTarget.isEmpty()) {
                                             throw SecurityException("Hardlink target resolves to the extraction root")
                                         }
