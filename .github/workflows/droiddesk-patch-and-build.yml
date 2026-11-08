@@ -18,6 +18,7 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizer.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
+      - 'app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
@@ -58,6 +59,9 @@ jobs:
           ).read_text()
           archive_validator = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
+          ).read_text()
+          kali_setup_script = Path(
+              'app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh'
           ).read_text()
           gradle_app = Path('app/android/app/build.gradle.kts').read_text()
           audio_output = Path(
@@ -174,18 +178,28 @@ jobs:
           missing.extend(item for item in required_archive_validator if item not in archive_validator)
           if '@Test' not in archive_tests or 'rejectsTraversalThatWouldEscapeTheRoot' not in archive_tests:
               missing.append('archive path validator unit tests')
+          if 'rewritesGuestAbsoluteSymlinkAsRelativeLink' not in archive_tests:
+              missing.append('absolute guest symlink unit test')
           if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
               missing.append('org.tukaani:xz:1.12 dependency')
           if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
               missing.append('Apache Commons Compress 1.28.0 dependency')
 
-          required_kali = [
-              'kali-linux-default xfce4',
-              'apt-get update &&',
+          required_kali_runtime = [
               'minimumFreeBytes = 15L * 1024L * 1024L * 1024L',
               'File(rootfs, ".kali_default_tools_installed")',
+              'context.assets.open("droiddesk/kali/setup-kali-default.sh")',
+              '240, onLog',
           ]
-          missing.extend(item for item in required_kali if item not in runtime)
+          required_kali_script = [
+              'apt-get update',
+              'kali-linux-default',
+              'xfce4',
+              'DEBIAN_FRONTEND=noninteractive',
+              "dpkg-query -W -f='${Status}' kali-linux-default",
+          ]
+          missing.extend(item for item in required_kali_runtime if item not in runtime)
+          missing.extend(item for item in required_kali_script if item not in kali_setup_script)
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
