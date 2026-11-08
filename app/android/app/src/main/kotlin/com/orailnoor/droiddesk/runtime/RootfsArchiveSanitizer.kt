@@ -71,6 +71,11 @@ internal object RootfsArchiveSanitizer {
                                     throw SecurityException("Rootfs archive contains too many entries")
                                 }
 
+                                if (sourceEntry.isSparse) {
+                                    throw SecurityException(
+                                        "Sparse rootfs archive entries are not supported: ${sourceEntry.name.take(200)}"
+                                    )
+                                }
                                 val normalizedName = ArchivePathValidator.normalizeEntryName(sourceEntry.name)
                                 val isDirectory = sourceEntry.isDirectory
                                 if (normalizedName.isEmpty()) {
