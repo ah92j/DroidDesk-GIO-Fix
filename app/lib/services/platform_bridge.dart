@@ -190,6 +190,13 @@ class DroidDeskPlatform {
     return await _channel.invokeMethod<bool>('installKaliProotDesktop') ?? false;
   }
 
+  /// Current process-wide Kali setup state. Used to reattach to an operation
+  /// that continued after the installer screen was closed.
+  static Future<Map<String, dynamic>> getKaliInstallStatus() async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>('getKaliInstallStatus');
+    return result == null ? {} : Map<String, dynamic>.from(result);
+  }
+
   static Future<Map<String, bool>> getOptionalApps() async {
     final result = await _channel.invokeMethod('getOptionalApps');
     return Map<String, bool>.from(result);
