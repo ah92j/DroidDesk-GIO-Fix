@@ -12,8 +12,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
+import org.tukaani.xz.XZInputStream
 
 /**
  * Downloads, verifies, extracts and validates ARM64 Linux root filesystems.
@@ -511,26 +513,46 @@ class RootfsManager(private val context: Context) {
                 val listingLog = File(context.cacheDir, "rootfs-archive-list.txt")
                 val extractionLog = File(context.cacheDir, "rootfs-extract.log")
                 val xzArchive = archive.extension.equals("xz", ignoreCase = true)
+                val tarBinary = resolveTarExecutable()
 
                 report(onProgress, 0.12, "Checking archive entries...")
-                val listFlags = if (xzArchive) "tJf" else "tzf"
-                val listExit = runLoggedProcess(
-                    listOf("tar", listFlags, archive.absolutePath),
-                    listingLog,
-                    20L,
-                )
+                val listExit = if (xzArchive) {
+                    // Decode XZ inside the app process. Android may deny execution of
+                    // an xz binary stored in app-writable directories; tar must not
+                    // spawn an external xz process for this archive.
+                    runXzTarProcess(
+                        archive = archive,
+                        tarArguments = listOf("-t", "-f", "-"),
+                        outputFile = listingLog,
+                        timeoutMinutes = 20L,
+                    )
+                } else {
+                    runLoggedProcess(
+                        listOf(tarBinary, "-t", "-z", "-f", archive.absolutePath),
+                        listingLog,
+                        20L,
+                    )
+                }
                 if (listExit != 0) {
-                    throw IllegalStateException("Archive listing failed: ${readLogTail(listingLog)}")
+                    throw IllegalStateException("Archive listing failed (exit $listExit): ${readLogTail(listingLog)}")
                 }
                 validateArchiveListing(listingLog)
 
                 report(onProgress, 0.2, "Extracting ${DISTRO_NAMES[distro]}...")
-                val extractFlags = if (xzArchive) "Jxf" else "zxf"
-                val extractExit = runLoggedProcess(
-                    listOf("tar", extractFlags, archive.absolutePath, "-C", stagingRootfsDir.absolutePath),
-                    extractionLog,
-                    ARCHIVE_PROCESS_TIMEOUT_MINUTES,
-                )
+                val extractExit = if (xzArchive) {
+                    runXzTarProcess(
+                        archive = archive,
+                        tarArguments = listOf("-x", "-f", "-", "-C", stagingRootfsDir.absolutePath),
+                        outputFile = extractionLog,
+                        timeoutMinutes = ARCHIVE_PROCESS_TIMEOUT_MINUTES,
+                    )
+                } else {
+                    runLoggedProcess(
+                        listOf(tarBinary, "-x", "-z", "-f", archive.absolutePath, "-C", stagingRootfsDir.absolutePath),
+                        extractionLog,
+                        ARCHIVE_PROCESS_TIMEOUT_MINUTES,
+                    )
+                }
                 if (extractExit != 0) {
                     throw IllegalStateException("tar extraction failed (exit $extractExit): ${readLogTail(extractionLog)}")
                 }
@@ -604,6 +626,91 @@ class RootfsManager(private val context: Context) {
             }
         }
         if (count == 0) throw SecurityException("Archive contains no entries")
+    }
+
+    /**
+     * Resolve Android's system tar explicitly. Avoid PATH entries pointing into
+     * app-writable storage, which may be mounted no-exec on Android.
+     */
+    private fun resolveTarExecutable(): String {
+        val candidates = listOf(
+            File("/system/bin/tar"),
+            File("/system/xbin/tar"),
+            File("/bin/tar"),
+            File("/usr/bin/tar"),
+        )
+        return candidates.firstOrNull { it.isFile && it.canExecute() }?.absolutePath
+            ?: throw IllegalStateException("Android system tar executable was not found")
+    }
+
+    /**
+     * Stream an XZ archive through the in-process Java decoder into Android's
+     * system tar. No external xz process or temporary uncompressed tar file is
+     * required, so this works on Android builds that deny exec from app storage.
+     */
+    private fun runXzTarProcess(
+        archive: File,
+        tarArguments: List<String>,
+        outputFile: File,
+        timeoutMinutes: Long,
+    ): Int {
+        outputFile.parentFile?.let {
+            if (!it.exists() && !it.mkdirs()) {
+                throw IllegalStateException("Could not create archive process log directory")
+            }
+        }
+        if (outputFile.exists() && !outputFile.delete()) {
+            throw IllegalStateException("Could not clear previous archive process log")
+        }
+
+        val command = listOf(resolveTarExecutable()) + tarArguments
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .redirectOutput(outputFile)
+            .start()
+
+        val decodeFailure = AtomicReference<Throwable?>(null)
+        val feeder = thread(name = "rootfs-xz-decoder", isDaemon = true) {
+            try {
+                archive.inputStream().buffered(BUFFER_SIZE).use { compressed ->
+                    XZInputStream(compressed).use { decoded ->
+                        process.outputStream.buffered(BUFFER_SIZE).use { tarInput ->
+                            decoded.copyTo(tarInput, BUFFER_SIZE)
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                decodeFailure.set(error)
+                runCatching { process.outputStream.close() }
+            }
+        }
+
+        val completed = process.waitFor(timeoutMinutes, TimeUnit.MINUTES)
+        if (!completed) {
+            process.destroy()
+            if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
+            feeder.interrupt()
+            feeder.join(2_000)
+            throw IllegalStateException("XZ archive processing timed out")
+        }
+
+        feeder.join(5_000)
+        if (feeder.isAlive) {
+            process.destroyForcibly()
+            feeder.interrupt()
+            feeder.join(2_000)
+            throw IllegalStateException("XZ decoder did not finish after tar exited")
+        }
+
+        val exitCode = process.exitValue()
+        val failure = decodeFailure.get()
+        if (exitCode == 0 && failure != null) {
+            throw IllegalStateException(
+                "In-app XZ decompression failed: ${failure.message ?: failure.javaClass.simpleName}",
+                failure,
+            )
+        }
+        return exitCode
     }
 
     private fun runLoggedProcess(command: List<String>, outputFile: File, timeoutMinutes: Long): Int {
