@@ -296,7 +296,7 @@ jobs:
               missing.append('Kali install must start the DroidDesk foreground service')
 
           if 'version: 1.4.7+22' not in pubspec:
-              missing.append('version: 1.4.0+15')
+              missing.append('version: 1.4.7+22')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
