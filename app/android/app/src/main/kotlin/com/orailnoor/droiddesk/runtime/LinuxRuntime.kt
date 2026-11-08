@@ -244,19 +244,27 @@ class LinuxRuntime(private val context: Context) {
                 )
             }
 
-            onProgress(0.20, "Updating Kali package indexes...")
+            onProgress(0.18, "Preparing the embedded Kali deployment script...")
+            val scriptDirectory = File(rootfs, "root/.droiddesk")
+            if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
+                throw IllegalStateException("Could not create Kali deployment-script directory")
+            }
+            val setupScript = File(scriptDirectory, "setup-kali-default.sh")
+            context.assets.open("droiddesk/kali/setup-kali-default.sh").use { input ->
+                setupScript.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!setupScript.setExecutable(true, false)) {
+                throw IllegalStateException("Could not mark the Kali deployment script executable")
+            }
+
+            onProgress(0.20, "Installing Kali default tools and XFCE...")
             val install = runKaliProotCommand(
                 rootfs, "/root",
                 listOf(
                     "/usr/bin/env", "-i", "HOME=/root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "TERM=xterm-256color", "LANG=C.UTF-8", "DEBIAN_FRONTEND=noninteractive",
-                    "/bin/bash", "-lc",
-                    "apt-get update && " +
-                        "apt-get -o Dpkg::Options::=--force-confdef " +
-                        "-o Dpkg::Options::=--force-confold install -y " +
-                        "kali-linux-default xfce4 xfce4-terminal dbus-x11 xclip x11-utils " +
-                        "papirus-icon-theme fonts-noto-core",
+                    "/bin/bash", "-lc", "/bin/bash /root/.droiddesk/setup-kali-default.sh",
                 ),
                 240, onLog,
             )
