@@ -45,13 +45,13 @@ APT_PACKAGES=(
 )
 
 # CI-only validation mode. This does not modify /etc, /var, dpkg, or the network.
-if [[ "\${1:-}" == "--self-test" ]]; then
+if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$KALI_PRIMARY" == "https://kali.download/kali/" ]]
   [[ "$KALI_FALLBACK" == "https://archive.kali.org/kali/" ]]
   [[ "$KALI_PRIMARY" != "$KALI_FALLBACK" ]]
-  [[ " \${APT_OPTIONS[*]} " == *"Acquire::ForceIPv4=true"* ]]
-  [[ " \${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Peer=true"* ]]
-  [[ " \${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Host=true"* ]]
+  [[ " ${APT_OPTIONS[*]} " == *"Acquire::ForceIPv4=true"* ]]
+  [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Peer=true"* ]]
+  [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Host=true"* ]]
   printf '%s\n' "[DroidDesk Kali] APT setup configuration checks passed."
   exit 0
 fi
@@ -104,7 +104,7 @@ configure_official_kali_source() {
     /etc/apt/sources.list.d/*.sources
   )
 
-  for source_file in "\${source_files[@]}"; do
+  for source_file in "${source_files[@]}"; do
     [[ -f "$source_file" ]] || continue
     [[ "$source_file" == "$APT_SOURCE_FILE" ]] && continue
 
@@ -149,7 +149,7 @@ run_apt_transaction() {
   fi
 
   echo "[DroidDesk Kali] Updating package indexes over HTTPS..."
-  if ! apt-get "\${APT_OPTIONS[@]}" update; then
+  if ! apt-get "${APT_OPTIONS[@]}" update; then
     echo "[DroidDesk Kali] Repository index update failed: $repository_uri"
     return 1
   fi
@@ -157,7 +157,7 @@ run_apt_transaction() {
   # Complete packages unpacked by an earlier interrupted attempt.
   if ! dpkg --configure -a; then
     echo "[DroidDesk Kali] Repairing the interrupted dpkg transaction..."
-    if ! apt-get "\${APT_OPTIONS[@]}" --fix-broken install -y; then
+    if ! apt-get "${APT_OPTIONS[@]}" --fix-broken install -y; then
       echo "[DroidDesk Kali] The existing dpkg transaction could not be repaired."
       return 1
     fi
@@ -169,7 +169,7 @@ run_apt_transaction() {
   fi
 
   echo "[DroidDesk Kali] Installing Kali default tools and XFCE..."
-  apt-get "\${APT_OPTIONS[@]}" install -y "\${APT_PACKAGES[@]}"
+  apt-get "${APT_OPTIONS[@]}" install -y "${APT_PACKAGES[@]}"
 }
 
 echo "[DroidDesk Kali] Preparing APT cache and temporary directories..."
@@ -199,7 +199,7 @@ if [[ "$INSTALL_SUCCEEDED" -ne 1 ]]; then
 fi
 
 echo "[DroidDesk Kali] Verifying the requested package set..."
-dpkg-query -W -f='\${Status}' kali-linux-default | grep -qx 'install ok installed'
+dpkg-query -W -f='${Status}' kali-linux-default | grep -qx 'install ok installed'
 test -x /usr/bin/startxfce4
 test -x /usr/bin/dbus-launch
 test -x /usr/bin/xfce4-session
