@@ -228,7 +228,7 @@ class LinuxRuntime(private val context: Context) {
             if (!isManagedKaliRootfs(rootfs)) throw SecurityException("The private rootfs is not a verified Kali installation")
 
             report(0.04, "Preparing DroidDesk PRoot runtime...")
-            if (!installOptionalPackages(listOf("proot"), onProgress, 0.12)) {
+            if (!installOptionalPackages(listOf("proot"), report, 0.12)) {
                 throw IllegalStateException("Could not install PRoot inside DroidDesk")
             }
             patchShebangs(force = true)
