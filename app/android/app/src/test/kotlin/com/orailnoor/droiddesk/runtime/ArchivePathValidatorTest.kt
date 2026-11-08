@@ -47,6 +47,18 @@ class ArchivePathValidatorTest {
     }
 
     @Test
+    fun rewritesGuestAbsoluteSymlinkAsRelativeLink() {
+        assertEquals(
+            "../run",
+            ArchivePathValidator.validateSymbolicLinkTarget("var/run", "/run"),
+        )
+        assertEquals(
+            "env",
+            ArchivePathValidator.validateSymbolicLinkTarget("usr/bin/env", "/usr/bin/env"),
+        )
+    }
+
+    @Test
     fun rejectsRelativeSymlinkThatEscapesRoot() {
         assertThrows(SecurityException::class.java) {
             ArchivePathValidator.validateSymbolicLinkTarget("usr/bin/tool", "../../../../data")
