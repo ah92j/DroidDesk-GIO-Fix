@@ -28,6 +28,7 @@ APT_OPTIONS=(
   -o Acquire::https::Verify-Host=true
   -o Acquire::AllowDowngradeToInsecureRepositories=false
   -o Acquire::Queue-Mode=access
+  -o APT::Keep-Downloaded-Packages=true
   -o Dpkg::Use-Pty=0
   -o Dpkg::Options::=--force-confdef
   -o Dpkg::Options::=--force-confold
@@ -56,6 +57,64 @@ if [[ "${1:-}" == "--self-test" ]]; then
   exit 0
 fi
 
+install -d -m 0700 /root/.droiddesk
+readonly LOG_FILE="/root/.droiddesk/kali-install.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+configure_proot_service_policy() {
+  # A PRoot container has no system init; starting daemons during package setup
+  # can stall maintainer scripts. Preserve any pre-existing site policy.
+  install -d -m 0755 /usr/sbin
+  if [[ ! -e /usr/sbin/policy-rc.d ]]; then
+    cat > /usr/sbin/policy-rc.d <<'POLICY'
+#!/bin/sh
+exit 101
+POLICY
+    chmod 0755 /usr/sbin/policy-rc.d
+  fi
+
+  install -d -m 0755 /etc/apt/apt.conf.d
+  cat > /etc/apt/apt.conf.d/99droiddesk-resume <<'APTCONF'
+APT::Keep-Downloaded-Packages "true";
+Acquire::Retries "3";
+Dpkg::Use-Pty "0";
+APTCONF
+  echo "[DroidDesk Kali] PRoot service-start policy and persistent APT archive cache are enabled."
+}
+
+run_with_package_heartbeat() {
+  local label="$1"
+  shift
+
+  "$@" &
+  local command_pid=$!
+  (
+    while kill -0 "$command_pid" 2>/dev/null; do
+      sleep 20
+      if kill -0 "$command_pid" 2>/dev/null; then
+        local latest_event
+        latest_event="$(tail -n 1 /var/log/dpkg.log 2>/dev/null || true)"
+        if [[ -z "$latest_event" ]]; then
+          latest_event="No dpkg event has been recorded yet"
+        fi
+        echo "[DroidDesk Kali] Still working: $label. Last dpkg activity: $latest_event"
+      fi
+    done
+  ) &
+  local heartbeat_pid=$!
+
+  local command_status=0
+  if wait "$command_pid"; then
+    command_status=0
+  else
+    command_status=$?
+  fi
+
+  kill "$heartbeat_pid" 2>/dev/null || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  return "$command_status"
+}
+
 prepare_apt_directories() {
   install -d -m 0755 /var/cache/apt/archives
   install -d -m 0700 /var/cache/apt/archives/partial
@@ -64,15 +123,12 @@ prepare_apt_directories() {
   install -d -m 1777 /tmp
   install -d -m 0755 /var/tmp
 
-  # Keep completed packages for reuse, but remove interrupted partial files.
+  # Keep completed package archives and repository indexes for resumable retries.
   find /var/cache/apt/archives/partial -mindepth 1 -maxdepth 1 -type f -delete
   find /var/lib/apt/lists/partial -mindepth 1 -maxdepth 1 -type f -delete
-}
-
-clear_stale_apt_indexes() {
-  # Remove stale index metadata, but preserve downloaded .deb files and dpkg state.
-  find /var/lib/apt/lists -mindepth 1 -maxdepth 1 -type f -delete
-  find /var/lib/apt/lists/partial -mindepth 1 -maxdepth 1 -type f -delete
+  local cached_archives
+  cached_archives="$(find /var/cache/apt/archives -maxdepth 1 -type f -name '*.deb' | wc -l)"
+  echo "[DroidDesk Kali] Completed package archives preserved in cache: $cached_archives"
 }
 
 configure_official_kali_source() {
@@ -155,9 +211,9 @@ run_apt_transaction() {
   fi
 
   # Complete packages unpacked by an earlier interrupted attempt.
-  if ! dpkg --configure -a; then
+  if ! run_with_package_heartbeat "resuming dpkg configuration" dpkg --configure -a; then
     echo "[DroidDesk Kali] Repairing the interrupted dpkg transaction..."
-    if ! apt-get "${APT_OPTIONS[@]}" --fix-broken install -y; then
+    if ! run_with_package_heartbeat "repairing broken package dependencies" apt-get "${APT_OPTIONS[@]}" --fix-broken install -y; then
       echo "[DroidDesk Kali] The existing dpkg transaction could not be repaired."
       return 1
     fi
@@ -168,9 +224,11 @@ run_apt_transaction() {
     return 1
   fi
 
-  echo "[DroidDesk Kali] Installing Kali default tools and XFCE..."
-  apt-get "${APT_OPTIONS[@]}" install -y "${APT_PACKAGES[@]}"
+  echo "[DroidDesk Kali] Installing or resuming only missing Kali default tools and XFCE packages..."
+  run_with_package_heartbeat "installing and configuring Kali packages" apt-get "${APT_OPTIONS[@]}" install -y "${APT_PACKAGES[@]}"
 }
+
+configure_proot_service_policy
 
 echo "[DroidDesk Kali] Preparing APT cache and temporary directories..."
 if ! prepare_apt_directories; then
@@ -178,7 +236,6 @@ if ! prepare_apt_directories; then
   exit 1
 fi
 
-clear_stale_apt_indexes
 
 INSTALL_SUCCEEDED=0
 for repository_uri in "$KALI_PRIMARY" "$KALI_FALLBACK"; do
@@ -188,7 +245,7 @@ for repository_uri in "$KALI_PRIMARY" "$KALI_FALLBACK"; do
   fi
 
   echo "[DroidDesk Kali] Repository attempt failed; preserving completed downloads and repairing dpkg state..."
-  dpkg --configure -a || true
+  run_with_package_heartbeat "recovering dpkg after repository failure" dpkg --configure -a || true
   prepare_apt_directories || true
 done
 
