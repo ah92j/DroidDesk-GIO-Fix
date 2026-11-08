@@ -6,7 +6,9 @@ import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/state/app_state.dart';
 
 class DEInstallScreen extends StatefulWidget {
-  const DEInstallScreen({super.key});
+  final bool installKali;
+
+  const DEInstallScreen({super.key, this.installKali = false});
 
   @override
   State<DEInstallScreen> createState() => _DEInstallScreenState();
@@ -28,7 +30,14 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
   void _startInstall() {
     if (_started) return;
     _started = true;
-    context.read<AppState>().installDesktopEnvironment();
+    final state = context.read<AppState>();
+    if (widget.installKali) {
+      if (state.isRunning) await state.stopLinux();
+      state.setSelectedDistro('kali');
+      await state.runSetup(useRoot: false);
+    } else {
+      await state.installDesktopEnvironment();
+    }
   }
 
   @override
@@ -59,7 +68,9 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
       }
     });
 
-    final isDone = state.isDEInstalled;
+    final isDone = widget.installKali
+        ? state.installedDistro == 'kali-proot'
+        : state.isDEInstalled;
     final hasError = state.errorMessage != null;
 
     return Scaffold(
@@ -91,6 +102,8 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
                         ? 'Installation Complete'
                         : hasError
                         ? 'Installation Failed'
+                        : widget.installKali
+                        ? 'Installing Kali Linux'
                         : 'Configuring\nLinux Workstation',
                     style: DroidTheme.headingXl.copyWith(color: Colors.white),
                     textAlign: TextAlign.center,
@@ -100,6 +113,8 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
                   Text(
                     isDone
                         ? 'Your Linux environment is ready.'
+                        : widget.installKali
+                        ? 'Downloading Kali and preparing its desktop inside DroidDesk.'
                         : 'Downloading and configuring system packages.',
                     style: DroidTheme.bodyMd.copyWith(color: Colors.white60),
                     textAlign: TextAlign.center,
@@ -154,7 +169,11 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
                           child: LinearProgressIndicator(
-                            value: state.extractProgress.clamp(0.0, 1.0),
+                            value: state.isDownloading
+                                ? state.downloadProgress.clamp(0.0, 1.0)
+                                : state.isExtracting
+                                ? state.extractProgress.clamp(0.0, 1.0)
+                                : null,
                             backgroundColor: DroidTheme.surfaceLight.withValues(
                               alpha: 0.2,
                             ),
@@ -166,9 +185,10 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          state.extractStatus.isNotEmpty
-                              ? state.extractStatus
-                              : 'Extracting packages...',
+                          state.statusMessage ??
+                              (state.extractStatus.isNotEmpty
+                                  ? state.extractStatus
+                                  : 'Preparing packages...'),
                           style: DroidTheme.monoSm.copyWith(
                             color: Colors.white70,
                           ),
