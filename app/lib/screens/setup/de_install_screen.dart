@@ -27,7 +27,7 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
     });
   }
 
-  void _startInstall() {
+  Future<void> _startInstall() async {
     if (_started) return;
     _started = true;
     final state = context.read<AppState>();
