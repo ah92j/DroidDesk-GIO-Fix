@@ -15,7 +15,6 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
       - 'app/lib/services/platform_bridge.dart'
@@ -28,7 +27,7 @@ on:
       - 'app/pubspec.yaml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   patch-and-build:
@@ -53,10 +52,6 @@ jobs:
           profile = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
           ).read_text()
-          rootfs_manager = Path(
-              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
-          ).read_text()
-          gradle = Path('app/android/app/build.gradle.kts').read_text()
           root_shell = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootShell.kt'
           ).read_text()
@@ -130,13 +125,6 @@ jobs:
               'val verifiedApk = requireManagedApk(context, apk)',
           ]
 
-          required_rootfs_manager = [
-              'org.tukaani.xz.XZInputStream',
-              'private fun runXzTarProcess(',
-              'private fun resolveTarExecutable()',
-              'listOf("-t", "-f", "-")',
-              'listOf("-x", "-f", "-", "-C", stagingRootfsDir.absolutePath)',
-          ]
           missing = [item for item in required_runtime if item not in runtime]
           missing.extend(item for item in required_audio_output if item not in audio_output)
           missing.extend(item for item in required_profile if item not in profile)
@@ -144,13 +132,8 @@ jobs:
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
-          missing.extend(item for item in required_rootfs_manager if item not in rootfs_manager)
-          if 'implementation("org.tukaani:xz:1.12")' not in gradle:
-              missing.append('org.tukaani:xz:1.12 Gradle dependency')
-          if 'listFlags = if (xzArchive) "tJf"' in rootfs_manager:
-              missing.append('remove external xz invocation from Kali archive listing')
 
-          if 'version: 1.3.9+14' not in pubspec:
+          if 'version: 1.3.8+13' not in pubspec:
               missing.append('version: 1.3.7+12')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -233,7 +216,7 @@ jobs:
           DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
           DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
           DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
-        run: gradle wrapper --gradle-version 8.14 --distribution-type bin --no-validate-url
+        run: gradle wrapper --gradle-version 8.14 --distribution-type all
 
       - name: Resolve Flutter packages
         working-directory: app
@@ -286,36 +269,10 @@ jobs:
 
           echo "APK certificate matches the permanent DroidDesk release key."
 
-      - name: Publish stable direct APK download
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          SOURCE_APK="app/build/app/outputs/flutter-apk/app-release.apk"
-          FILE_NAME="DroidDesk-1.3.9-arm64.apk"
-          PUBLISH_DIR="$RUNNER_TEMP/droiddesk-apk-download"
-
-          test -s "$SOURCE_APK"
-          mkdir -p "$PUBLISH_DIR"
-          cp "$SOURCE_APK" "$PUBLISH_DIR/$FILE_NAME"
-
-          git -C "$PUBLISH_DIR" init -b apk-downloads
-          git -C "$PUBLISH_DIR" config user.name "github-actions[bot]"
-          git -C "$PUBLISH_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$PUBLISH_DIR" add "$FILE_NAME"
-          git -C "$PUBLISH_DIR" commit -m "Publish DroidDesk 1.3.9 ARM64 APK"
-          git -C "$PUBLISH_DIR" remote add origin \
-            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git -C "$PUBLISH_DIR" push --force origin HEAD:refs/heads/apk-downloads
-
-          echo "Stable direct APK URL:"
-          echo "https://raw.githubusercontent.com/ah92j/DroidDesk-GIO-Fix/apk-downloads/$FILE_NAME"
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.3.9-arm64
+          name: DroidDesk-1.3.8-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
