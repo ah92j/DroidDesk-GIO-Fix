@@ -52,6 +52,10 @@ jobs:
           profile = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
           ).read_text()
+          rootfs_manager = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
+          ).read_text()
+          gradle = Path('app/android/app/build.gradle.kts').read_text()
           root_shell = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootShell.kt'
           ).read_text()
@@ -125,6 +129,18 @@ jobs:
               'val verifiedApk = requireManagedApk(context, apk)',
           ]
 
+          required_rootfs_manager = [
+              'org.tukaani.xz.XZInputStream',
+              'private fun runXzTarProcess(',
+              'private fun resolveTarExecutable()',
+              'listOf("-t", "-f", "-")',
+              'listOf("-x", "-f", "-", "-C", stagingRootfsDir.absolutePath)',
+          ]
+          if 'implementation("org.tukaani:xz:1.12")' not in gradle:
+              missing.append('org.tukaani:xz:1.12 Gradle dependency')
+          missing.extend(item for item in required_rootfs_manager if item not in rootfs_manager)
+          if 'listFlags = if (xzArchive) "tJf"' in rootfs_manager:
+              missing.append('remove external xz invocation from Kali archive listing')
           missing = [item for item in required_runtime if item not in runtime]
           missing.extend(item for item in required_audio_output if item not in audio_output)
           missing.extend(item for item in required_profile if item not in profile)
@@ -133,7 +149,7 @@ jobs:
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
 
-          if 'version: 1.3.8+13' not in pubspec:
+          if 'version: 1.3.9+14' not in pubspec:
               missing.append('version: 1.3.7+12')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -277,7 +293,7 @@ jobs:
           set -euo pipefail
           TAG="v1.3.8"
           APK="app/build/outputs/flutter-apk/app-release.apk"
-          RELEASE_APK="DroidDesk-1.3.8-arm64.apk"
+          RELEASE_APK="DroidDesk-1.3.9-arm64.apk"
           test -s "$APK"
           cp "$APK" "$RELEASE_APK"
 
