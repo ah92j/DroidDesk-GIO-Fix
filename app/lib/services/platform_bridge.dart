@@ -186,6 +186,10 @@ class DroidDeskPlatform {
         false;
   }
 
+  static Future<bool> installKaliProotDesktop() async {
+    return await _channel.invokeMethod<bool>('installKaliProotDesktop') ?? false;
+  }
+
   static Future<Map<String, bool>> getOptionalApps() async {
     final result = await _channel.invokeMethod('getOptionalApps');
     return Map<String, bool>.from(result);
