@@ -337,7 +337,12 @@ class AppState extends ChangeNotifier {
       _setupStep = 4;
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Setup failed: $e';
+      // Keep the specific failure reported by the native download/extraction/
+      // installation callback instead of replacing it with this generic wrapper.
+      final reportedError = _errorMessage?.trim();
+      _errorMessage = (reportedError != null && reportedError.isNotEmpty)
+          ? reportedError
+          : 'Setup failed: $e';
       _isDownloading = false;
       _isExtracting = false;
       _isInstallingDE = false;
