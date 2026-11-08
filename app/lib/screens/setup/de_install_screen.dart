@@ -4,6 +4,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:droiddesk/theme/droid_theme.dart';
 import 'package:droiddesk/state/app_state.dart';
+import 'package:droiddesk/services/platform_bridge.dart';
 
 class DEInstallScreen extends StatefulWidget {
   final bool installKali;
@@ -32,8 +33,19 @@ class _DEInstallScreenState extends State<DEInstallScreen> {
     _started = true;
     final state = context.read<AppState>();
     if (widget.installKali) {
-      if (state.isRunning) await state.stopLinux();
       state.setSelectedDistro('kali');
+
+      // Returning to this route must reattach to the existing APT operation.
+      // Do not stop the Linux runtime while the native Kali installer is active.
+      final installStatus = await DroidDeskPlatform.getKaliInstallStatus();
+      final runtimeStatus = await DroidDeskPlatform.getRuntimeStatus();
+      final operationRunning = installStatus['running'] == true;
+      final kaliAlreadyInstalled = runtimeStatus['distro'] == 'kali-proot';
+
+      if (!operationRunning && !kaliAlreadyInstalled && state.isRunning) {
+        await state.stopLinux();
+      }
+      if (!mounted) return;
       await state.runSetup(useRoot: false);
     } else {
       await state.installDesktopEnvironment();
