@@ -62,7 +62,8 @@ internal object ArchivePathValidator {
 
     /**
      * Validate a symbolic-link target relative to the link's containing folder.
-     * Absolute links are treated as guest-root paths (normal Linux rootfs layout).
+     * Guest-root absolute links are rewritten as safe relative links so archive
+     * extraction never encounters a host-absolute symlink destination.
      */
     fun validateSymbolicLinkTarget(entryName: String, rawTarget: String): String {
         val target = rawTarget.removeSuffix("\r")
