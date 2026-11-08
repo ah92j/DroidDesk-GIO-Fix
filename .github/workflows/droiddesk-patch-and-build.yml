@@ -15,6 +15,7 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
       - 'app/lib/services/platform_bridge.dart'
@@ -27,7 +28,7 @@ on:
       - 'app/pubspec.yaml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   patch-and-build:
@@ -46,6 +47,10 @@ jobs:
           runtime = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
           ).read_text()
+          rootfs_manager = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
+          ).read_text()
+          gradle_app = Path('app/android/app/build.gradle.kts').read_text()
           audio_output = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
           ).read_text()
@@ -132,8 +137,19 @@ jobs:
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
+          required_xz = [
+              'org.tukaani.xz.XZInputStream',
+              'private fun runXzTarProcess(',
+              'tarArguments = listOf("-t", "-f", "-")',
+              'tarArguments = listOf("-x", "-f", "-", "-C", stagingRootfsDir.absolutePath)',
+          ]
+          missing.extend(item for item in required_xz if item not in rootfs_manager)
+          if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
+              missing.append('org.tukaani:xz:1.12 dependency')
+          if 'listFlags = if (xzArchive) "tJf"' in rootfs_manager:
+              missing.append('external xz invocation still present in rootfs extraction')
 
-          if 'version: 1.3.8+13' not in pubspec:
+          if 'version: 1.3.9+14' not in pubspec:
               missing.append('version: 1.3.7+12')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -216,7 +232,7 @@ jobs:
           DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
           DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
           DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
-        run: gradle wrapper --gradle-version 8.14 --distribution-type all
+        run: gradle wrapper --gradle-version 8.14 --distribution-type bin --no-validate-url
 
       - name: Resolve Flutter packages
         working-directory: app
@@ -272,7 +288,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.3.8-arm64
+          name: DroidDesk-1.3.9-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
