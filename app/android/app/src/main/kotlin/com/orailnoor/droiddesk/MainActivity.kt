@@ -316,6 +316,10 @@ class MainActivity : FlutterActivity() {
                     ))
                 }
 
+                "getKaliInstallStatus" -> {
+                    result.success(KaliInstallCoordinator.snapshot())
+                }
+
                 // ── Device Info ──
                 "getDeviceInfo" -> {
                     result.success(mapOf(
