@@ -255,13 +255,21 @@ jobs:
               'xfce4',
               'DEBIAN_FRONTEND=noninteractive',
               "dpkg-query -W -f='${Status}' kali-linux-default",
+              'https://kali.download/kali',
+              'http://http.kali.org/kali',
+              'Acquire::Retries=4',
+              '/var/cache/apt/archives/partial',
+              '/var/lib/apt/lists/partial',
+              'dpkg --configure -a',
+              '--fix-broken install',
+              'apt-sources-original',
           ]
           missing.extend(item for item in required_kali_runtime if item not in runtime)
           missing.extend(item for item in required_kali_script if item not in kali_setup_script)
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
-          if 'version: 1.4.4+19' not in pubspec:
+          if 'version: 1.4.5+20' not in pubspec:
               missing.append('version: 1.4.0+15')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -274,6 +282,10 @@ jobs:
 
           print('Android AudioTrack pipe, PulseAudio sink routing, GIO, chroot mounts, distro status, updater security, permissions, XFCE and version checks passed.')
           PY
+
+      - name: Validate Kali APT setup script syntax
+        shell: bash
+        run: bash -n app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -409,7 +421,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.4-arm64
+          name: DroidDesk-1.4.5-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
