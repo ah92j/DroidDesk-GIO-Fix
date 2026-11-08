@@ -20,7 +20,6 @@ internal object ArchivePathValidator {
         if (
             name.startsWith("/") ||
             Regex("^[A-Za-z]:").containsMatchIn(name) ||
-            name.contains('\\') ||
             name.any { it.isISOControl() }
         ) {
             throw SecurityException("Blocked unsafe archive path: ${display(name)}")
@@ -61,6 +60,41 @@ internal object ArchivePathValidator {
     }
 
     /**
+     * Strip the expected top-level folder from an official rootfs archive.
+     * Every real archive member must be inside that folder; the folder entry
+     * itself becomes the extraction root and is omitted.
+     */
+    fun stripExpectedArchiveRoot(normalizedName: String, expectedRoot: String): String {
+        val root = normalizeEntryName(expectedRoot, stripLeadingParents = false)
+        if (root.isEmpty() || root.contains('/')) {
+            throw IllegalArgumentException("Expected archive root must be one path component")
+        }
+        return when {
+            normalizedName == root -> ""
+            normalizedName.startsWith("$root/") -> normalizedName.removePrefix("$root/")
+            else -> throw SecurityException(
+                "Archive entry is outside the expected $root/ root: ${display(normalizedName)}"
+            )
+        }
+    }
+
+    /**
+     * Hardlink names are archive-root-relative, but some tar producers omit
+     * the enclosing root folder. Accept either safe spelling and normalize it.
+     */
+    fun stripExpectedArchiveRootFromHardLink(
+        normalizedTarget: String,
+        expectedRoot: String,
+    ): String {
+        val root = normalizeEntryName(expectedRoot, stripLeadingParents = false)
+        return when {
+            normalizedTarget == root -> ""
+            normalizedTarget.startsWith("$root/") -> normalizedTarget.removePrefix("$root/")
+            else -> normalizedTarget
+        }
+    }
+
+    /**
      * Validate a symbolic-link target relative to the link's containing folder.
      * Guest-root absolute links are rewritten as safe relative links so archive
      * extraction never encounters a host-absolute symlink destination.
@@ -69,7 +103,6 @@ internal object ArchivePathValidator {
         val target = rawTarget.removeSuffix("\r")
         if (
             target.isEmpty() ||
-            target.contains('\\') ||
             target.any { it.isISOControl() } ||
             Regex("^[A-Za-z]:").containsMatchIn(target)
         ) {
