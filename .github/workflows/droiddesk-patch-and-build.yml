@@ -262,7 +262,9 @@ jobs:
               'Acquire::https::Verify-Host=true',
               'Acquire::Retries=3',
               'BASH_ENV=/dev/null',
-              'clear_stale_apt_indexes',
+              'APT::Keep-Downloaded-Packages=true',
+              'run_with_package_heartbeat',
+              'policy-rc.d',
               'URIs: $repository_uri',
               '/var/cache/apt/archives/partial',
               '/var/lib/apt/lists/partial',
@@ -295,8 +297,16 @@ jobs:
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
-          if 'version: 1.4.7+22' not in pubspec:
-              missing.append('version: 1.4.7+22')
+          if 'version: 1.4.8+23' not in pubspec:
+              missing.append('version: 1.4.8+23')
+          if 'clear_stale_apt_indexes' in kali_setup_script:
+              missing.append('preserve APT package indexes between resumable installer attempts')
+          if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
+              missing.append('retain completed APT archives across installer retries')
+          if 'run_with_package_heartbeat' not in kali_setup_script:
+              missing.append('emit dpkg package-configuration heartbeats')
+          if 'policy-rc.d' not in kali_setup_script:
+              missing.append('prevent service startup inside PRoot during package configuration')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
