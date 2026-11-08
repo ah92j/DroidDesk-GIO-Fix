@@ -295,6 +295,10 @@ jobs:
       - name: Run rootfs archive path safety tests
         working-directory: app/android
         shell: bash
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Build ARM64 release APK
