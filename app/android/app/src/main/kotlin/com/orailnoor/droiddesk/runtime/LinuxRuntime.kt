@@ -343,14 +343,18 @@ class LinuxRuntime(private val context: Context) {
         prepareKaliProot(rootfs)
         val proot = File(binDir, "proot")
         val sharedMemory = File(tmpDir, "kali-shm")
-        val command = mutableListOf(
-            proot.absolutePath, "--link2symlink", "-0", "-r", rootfs.canonicalPath,
-            "-b", "/dev", "-b", "/proc",
-            "-b", "${tmpDir.absolutePath}:/tmp",
-            "-b", "${sharedMemory.absolutePath}:/dev/shm",
-            "-w", workingDirectory, "--",
+        val command = KaliProotCommandLine.build(
+            prootExecutable = proot.absolutePath,
+            rootfsPath = rootfs.canonicalPath,
+            workingDirectory = workingDirectory,
+            bindMounts = listOf(
+                "/dev",
+                "/proc",
+                "${tmpDir.absolutePath}:/tmp",
+                "${sharedMemory.absolutePath}:/dev/shm",
+            ),
+            guestCommand = guestCommand,
         )
-        command.addAll(guestCommand)
         val builder = ProcessBuilder(command).directory(homeDir.apply { mkdirs() }).redirectErrorStream(true)
         val environment = builder.environment()
         environment.clear()
@@ -416,7 +420,7 @@ class LinuxRuntime(private val context: Context) {
             mkdir -p '${File(tmpDir, "proot-kali").absolutePath}' '${shm.absolutePath}'
             exec '${proot.absolutePath}' --link2symlink -0 -r '${rootfs.canonicalPath}' \
               -b /dev -b /proc -b '${tmpDir.absolutePath}:/tmp' -b '${shm.absolutePath}:/dev/shm' \
-              -w /home/kali -- \
+              -w /home/kali \
               /usr/bin/env -i HOME=/home/kali USER=kali LOGNAME=kali \
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
               SHELL=/usr/bin/zsh TERM=xterm-256color LANG=C.UTF-8 DISPLAY=:0 \
