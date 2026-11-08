@@ -27,7 +27,7 @@ on:
       - 'app/pubspec.yaml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   patch-and-build:
@@ -268,6 +268,30 @@ jobs:
           fi
 
           echo "APK certificate matches the permanent DroidDesk release key."
+
+      - name: Publish stable APK download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v1.3.8"
+          APK="app/build/outputs/flutter-apk/app-release.apk"
+          RELEASE_APK="DroidDesk-1.3.8-arm64.apk"
+          test -s "$APK"
+          cp "$APK" "$RELEASE_APK"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$RELEASE_APK" --clobber
+          else
+            gh release create "$TAG" "$RELEASE_APK" \
+              --target "$GITHUB_SHA" \
+              --title "DroidDesk 1.3.8" \
+              --notes "ARM64 Android APK. Built and verified by the DroidDesk release workflow."
+          fi
+
+          echo "Stable APK URL:"
+          echo "https://github.com/ah92j/DroidDesk-GIO-Fix/releases/download/$TAG/$RELEASE_APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
