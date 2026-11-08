@@ -230,7 +230,7 @@ class LinuxRuntime(private val context: Context) {
                 2, onLog,
             )
             if (preflight.exitCode != 0) {
-                throw IllegalStateException("DroidDesk PRoot could not enter Kali: \${preflight.output.takeLast(1200)}")
+                throw IllegalStateException("DroidDesk PRoot could not enter Kali: ${preflight.output.takeLast(1200)}")
             }
 
             onProgress(0.22, "Installing Kali desktop packages...")
@@ -247,7 +247,7 @@ class LinuxRuntime(private val context: Context) {
                 120, onLog,
             )
             if (install.exitCode != 0) {
-                throw IllegalStateException("Kali desktop installation failed (exit \${install.exitCode}): \${install.output.takeLast(1800)}")
+                throw IllegalStateException("Kali desktop installation failed (exit ${install.exitCode}): ${install.output.takeLast(1800)}")
             }
             if (!File(rootfs, "etc/passwd").readLines().any { it.startsWith("kali:") }) {
                 throw IllegalStateException("The Kali rootfs does not contain the standard kali user")
@@ -255,7 +255,7 @@ class LinuxRuntime(private val context: Context) {
             File(rootfs, ".chroot_de_installed").writeText("xfce4\n")
             writeKaliLauncher(rootfs)
             onProgress(1.0, "Kali XFCE installed inside DroidDesk")
-            Log.i(TAG, "Rootless Kali XFCE installation completed: \${rootfs.absolutePath}")
+            Log.i(TAG, "Rootless Kali XFCE installation completed: ${rootfs.absolutePath}")
             true
         } catch (error: Exception) {
             Log.e(TAG, "Rootless Kali desktop installation failed", error)
@@ -302,8 +302,8 @@ class LinuxRuntime(private val context: Context) {
         val command = mutableListOf(
             proot.absolutePath, "--link2symlink", "-0", "-r", rootfs.canonicalPath,
             "-b", "/dev", "-b", "/proc",
-            "-b", "\${tmpDir.absolutePath}:/tmp",
-            "-b", "\${sharedMemory.absolutePath}:/dev/shm",
+            "-b", "${tmpDir.absolutePath}:/tmp",
+            "-b", "${sharedMemory.absolutePath}:/dev/shm",
             "-w", workingDirectory, "--",
         )
         command.addAll(guestCommand)
@@ -364,14 +364,14 @@ class LinuxRuntime(private val context: Context) {
             """
             #!/system/bin/sh
             set -e
-            export PROOT_TMP_DIR='\${File(tmpDir, "proot-kali").absolutePath}'
-            export PROOT_LOADER='\${loader.absolutePath}'
-            \${if (loader32.isFile) "export PROOT_LOADER_32='\${loader32.absolutePath}'" else ""}
-            export LD_LIBRARY_PATH='\${libDir.absolutePath}'
+            export PROOT_TMP_DIR='${File(tmpDir, "proot-kali").absolutePath}'
+            export PROOT_LOADER='${loader.absolutePath}'
+            ${if (loader32.isFile) "export PROOT_LOADER_32='${loader32.absolutePath}'" else ""}
+            export LD_LIBRARY_PATH='${libDir.absolutePath}'
             unset LD_PRELOAD
-            mkdir -p '\${File(tmpDir, "proot-kali").absolutePath}' '\${shm.absolutePath}'
-            exec '\${proot.absolutePath}' --link2symlink -0 -r '\${rootfs.canonicalPath}' \
-              -b /dev -b /proc -b '\${tmpDir.absolutePath}:/tmp' -b '\${shm.absolutePath}:/dev/shm' \
+            mkdir -p '${File(tmpDir, "proot-kali").absolutePath}' '${shm.absolutePath}'
+            exec '${proot.absolutePath}' --link2symlink -0 -r '${rootfs.canonicalPath}' \
+              -b /dev -b /proc -b '${tmpDir.absolutePath}:/tmp' -b '${shm.absolutePath}:/dev/shm' \
               -w /home/kali -- \
               /usr/bin/env -i HOME=/home/kali USER=kali LOGNAME=kali \
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -1308,8 +1308,8 @@ class LinuxRuntime(private val context: Context) {
 
         if (strTabFileOffset == null) return false
 
-        val origin = "\${ORIGIN}"
-        val relativeLib = "\${ORIGIN}/../lib"
+        val origin = "${ORIGIN}"
+        val relativeLib = "${ORIGIN}/../lib"
         val replacement = when {
             newPath.length <= oldPath.length -> newPath
             file.parentFile?.absolutePath == newPath -> origin
