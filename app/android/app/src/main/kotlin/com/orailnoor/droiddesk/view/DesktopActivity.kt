@@ -632,6 +632,8 @@ class DesktopActivity : Activity() {
                     chrootRuntime.executeCommand("mkdir -p /tmp && mkfifo /tmp/android_intent_pipe && chmod 666 /tmp/android_intent_pipe") {}
                     AndroidAppSync.syncApps(this@DesktopActivity, rootfsPath)
                     startIntentListener(rootfsPath)
+                } else if (sessionMode == "proot-kali") {
+                    linuxRuntime.startProotKaliSession(File(filesDir, "rootfs"), desktopEnv)
                 } else {
                     linuxRuntime.startSession(desktopEnv, "x11")
                 }
