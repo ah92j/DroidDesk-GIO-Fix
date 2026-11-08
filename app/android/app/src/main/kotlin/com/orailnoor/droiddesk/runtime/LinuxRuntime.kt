@@ -1,11 +1,13 @@
 package com.orailnoor.droiddesk.runtime
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.os.Build
 import android.util.Log
 import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.concurrent.TimeUnit
@@ -174,6 +176,250 @@ class LinuxRuntime(private val context: Context) {
             "/data/data/com.termux/files/usr/lib/dri",
         )
     }
+
+
+    // ── Rootless Kali inside DroidDesk (PRoot) ──
+    private data class KaliProotResult(val exitCode: Int, val output: String)
+
+    private fun isManagedKaliRootfs(rootfs: File): Boolean = runCatching {
+        val expected = File(baseDir, "rootfs").canonicalFile
+        if (rootfs.canonicalFile != expected || !rootfs.isDirectory) return@runCatching false
+        val id = File(rootfs, "etc/os-release").takeIf { it.isFile }?.readText().orEmpty()
+        id.lineSequence().any { it.trim().equals("ID=kali", ignoreCase = true) } &&
+            File(rootfs, "usr/bin/dpkg").isFile && File(rootfs, "usr/bin/bash").isFile
+    }.getOrDefault(false)
+
+    fun isKaliProotDesktopInstalled(rootfs: File): Boolean {
+        if (!isManagedKaliRootfs(rootfs)) return false
+        return runCatching {
+            File(rootfs, ".chroot_de_installed").readText().trim() == "xfce4" &&
+                File(rootfs, "usr/bin/startxfce4").isFile &&
+                File(rootfs, "usr/bin/dbus-launch").isFile &&
+                File(binDir, "proot").canExecute() &&
+                File(prefixDir, "libexec/proot/loader").isFile
+        }.getOrDefault(false)
+    }
+
+    /** Install XFCE in DroidDesk's private Kali rootfs without su/chroot or Termux storage. */
+    fun installKaliProotDesktop(
+        rootfs: File,
+        onProgress: (Double, String) -> Unit,
+        onLog: (String) -> Unit = {},
+    ): Boolean {
+        return try {
+            if (!isBootstrapped()) throw IllegalStateException("DroidDesk Linux bootstrap is not ready")
+            if (!isManagedKaliRootfs(rootfs)) throw SecurityException("The private rootfs is not a verified Kali installation")
+
+            onProgress(0.04, "Preparing DroidDesk PRoot runtime...")
+            if (!installOptionalPackages(listOf("proot"), onProgress, 0.12)) {
+                throw IllegalStateException("Could not install PRoot inside DroidDesk")
+            }
+            patchShebangs(force = true)
+            relocateProotExecutable()
+            configureKaliDns(rootfs)
+
+            onProgress(0.16, "Checking Kali rootless runtime...")
+            val preflight = runKaliProotCommand(
+                rootfs, "/root",
+                listOf(
+                    "/usr/bin/env", "-i", "HOME=/root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "LANG=C.UTF-8", "/bin/bash", "-lc",
+                    "test -x /bin/bash && test -x /usr/bin/apt-get && test -x /usr/bin/sudo",
+                ),
+                2, onLog,
+            )
+            if (preflight.exitCode != 0) {
+                throw IllegalStateException("DroidDesk PRoot could not enter Kali: \${preflight.output.takeLast(1200)}")
+            }
+
+            onProgress(0.22, "Installing Kali desktop packages...")
+            val install = runKaliProotCommand(
+                rootfs, "/root",
+                listOf(
+                    "/usr/bin/env", "-i", "HOME=/root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "TERM=xterm-256color", "LANG=C.UTF-8", "DEBIAN_FRONTEND=noninteractive",
+                    "/bin/bash", "-lc",
+                    "apt-get update && apt-get install -y --no-install-recommends " +
+                        "xfce4 xfce4-terminal dbus-x11 xclip x11-utils papirus-icon-theme fonts-noto-core",
+                ),
+                120, onLog,
+            )
+            if (install.exitCode != 0) {
+                throw IllegalStateException("Kali desktop installation failed (exit \${install.exitCode}): \${install.output.takeLast(1800)}")
+            }
+            if (!File(rootfs, "etc/passwd").readLines().any { it.startsWith("kali:") }) {
+                throw IllegalStateException("The Kali rootfs does not contain the standard kali user")
+            }
+            File(rootfs, ".chroot_de_installed").writeText("xfce4\n")
+            writeKaliLauncher(rootfs)
+            onProgress(1.0, "Kali XFCE installed inside DroidDesk")
+            Log.i(TAG, "Rootless Kali XFCE installation completed: \${rootfs.absolutePath}")
+            true
+        } catch (error: Exception) {
+            Log.e(TAG, "Rootless Kali desktop installation failed", error)
+            onProgress(-1.0, error.message ?: "Kali PRoot installation failed")
+            false
+        }
+    }
+
+    private fun configureKaliDns(rootfs: File) {
+        val dnsServers = runCatching {
+            val manager = context.getSystemService(ConnectivityManager::class.java)
+            val network = manager?.activeNetwork
+            network?.let { manager?.getLinkProperties(it) }?.dnsServers
+                ?.mapNotNull { it.hostAddress?.substringBefore('%') }
+                ?.filter { it.isNotBlank() }.orEmpty()
+        }.getOrDefault(emptyList())
+        val selected = dnsServers.distinct().ifEmpty { listOf("1.1.1.1", "8.8.8.8") }
+        val resolvConf = File(rootfs, "etc/resolv.conf")
+        if (Files.isSymbolicLink(resolvConf.toPath())) Files.deleteIfExists(resolvConf.toPath())
+        if (resolvConf.exists() && !resolvConf.isFile) throw IllegalStateException("Kali /etc/resolv.conf is not a regular file")
+        resolvConf.writeText(selected.joinToString("\n") { "nameserver $it" } + "\n")
+    }
+
+    private fun prepareKaliProot(rootfs: File) {
+        if (!isManagedKaliRootfs(rootfs)) throw SecurityException("Kali rootfs is missing or outside DroidDesk storage")
+        val proot = File(binDir, "proot")
+        val loader = File(prefixDir, "libexec/proot/loader")
+        if (!proot.isFile || !loader.isFile) throw IllegalStateException("DroidDesk PRoot or its Android loader is missing")
+        relocateProotExecutable()
+        val temp = File(tmpDir, "proot-kali")
+        val shm = File(tmpDir, "kali-shm")
+        if (!temp.exists() && !temp.mkdirs()) throw IllegalStateException("Cannot create PRoot temp directory")
+        if (!shm.exists() && !shm.mkdirs()) throw IllegalStateException("Cannot create Kali shared-memory directory")
+    }
+
+    private fun createKaliProotBuilder(
+        rootfs: File,
+        workingDirectory: String,
+        guestCommand: List<String>,
+    ): ProcessBuilder {
+        prepareKaliProot(rootfs)
+        val proot = File(binDir, "proot")
+        val sharedMemory = File(tmpDir, "kali-shm")
+        val command = mutableListOf(
+            proot.absolutePath, "--link2symlink", "-0", "-r", rootfs.canonicalPath,
+            "-b", "/dev", "-b", "/proc",
+            "-b", "\${tmpDir.absolutePath}:/tmp",
+            "-b", "\${sharedMemory.absolutePath}:/dev/shm",
+            "-w", workingDirectory, "--",
+        )
+        command.addAll(guestCommand)
+        val builder = ProcessBuilder(command).directory(homeDir.apply { mkdirs() }).redirectErrorStream(true)
+        val environment = builder.environment()
+        environment.clear()
+        environment.putAll(getTermuxEnv())
+        environment.remove("LD_PRELOAD")
+        environment["PROOT_TMP_DIR"] = File(tmpDir, "proot-kali").absolutePath
+        environment["PROOT_LOADER"] = File(prefixDir, "libexec/proot/loader").absolutePath
+        val loader32 = File(prefixDir, "libexec/proot/loader32")
+        if (loader32.isFile) environment["PROOT_LOADER_32"] = loader32.absolutePath
+        environment["LD_LIBRARY_PATH"] = libDir.absolutePath
+        return builder
+    }
+
+    private fun runKaliProotCommand(
+        rootfs: File,
+        workingDirectory: String,
+        guestCommand: List<String>,
+        timeoutMinutes: Long,
+        onOutput: (String) -> Unit,
+    ): KaliProotResult {
+        val process = createKaliProotBuilder(rootfs, workingDirectory, guestCommand).start()
+        val output = StringBuilder()
+        val reader = Thread({
+            runCatching {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        val chunk = "$line\n"
+                        synchronized(output) {
+                            output.append(chunk)
+                            if (output.length > 24_000) output.delete(0, output.length - 24_000)
+                        }
+                        runCatching { onOutput(chunk) }
+                    }
+                }
+            }.onFailure { Log.w(TAG, "Kali PRoot output reader failed", it) }
+        }, "KaliProotOutput").apply { isDaemon = true; start() }
+        val finished = process.waitFor(timeoutMinutes, TimeUnit.MINUTES)
+        if (!finished) {
+            process.destroy()
+            if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
+        }
+        reader.join(5_000)
+        val captured = synchronized(output) { output.toString() }
+        return KaliProotResult(if (finished) process.exitValue() else -1,
+            if (finished) captured else "$captured\nPRoot operation timed out")
+    }
+
+    private fun writeKaliLauncher(rootfs: File) {
+        val launcher = File(binDir, "start-kali")
+        val proot = File(binDir, "proot")
+        val loader = File(prefixDir, "libexec/proot/loader")
+        val loader32 = File(prefixDir, "libexec/proot/loader32")
+        val shm = File(tmpDir, "kali-shm")
+        launcher.writeText(
+            """
+            #!/system/bin/sh
+            set -e
+            export PROOT_TMP_DIR='\${File(tmpDir, "proot-kali").absolutePath}'
+            export PROOT_LOADER='\${loader.absolutePath}'
+            \${if (loader32.isFile) "export PROOT_LOADER_32='\${loader32.absolutePath}'" else ""}
+            export LD_LIBRARY_PATH='\${libDir.absolutePath}'
+            unset LD_PRELOAD
+            mkdir -p '\${File(tmpDir, "proot-kali").absolutePath}' '\${shm.absolutePath}'
+            exec '\${proot.absolutePath}' --link2symlink -0 -r '\${rootfs.canonicalPath}' \
+              -b /dev -b /proc -b '\${tmpDir.absolutePath}:/tmp' -b '\${shm.absolutePath}:/dev/shm' \
+              -w /home/kali -- \
+              /usr/bin/env -i HOME=/home/kali USER=kali LOGNAME=kali \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              SHELL=/usr/bin/zsh TERM=xterm-256color LANG=C.UTF-8 DISPLAY=:0 \
+              PULSE_SERVER=tcp:127.0.0.1:4713 XDG_RUNTIME_DIR=/tmp/runtime-kali \
+              /usr/bin/sudo -E -u kali /bin/bash --login
+            """.trimIndent() + "\n",
+        )
+        launcher.setExecutable(true, false)
+    }
+
+    /** Start Kali XFCE through PRoot and DroidDesk's existing X11/audio services. */
+    fun startProotKaliSession(rootfs: File, desktopEnv: String = "xfce4") {
+        require(desktopEnv == "xfce4") { "Only XFCE is configured for rootless Kali" }
+        if (!isKaliProotDesktopInstalled(rootfs)) throw IllegalStateException("Kali XFCE is not installed inside DroidDesk")
+        if (isRunning()) return
+        File(tmpDir, ".X11-unix").mkdirs()
+        if (!startPulseAudio()) Log.w(TAG, "Kali desktop will start without a confirmed audio sink")
+
+        val sessionScript =
+            "mkdir -p /tmp/runtime-kali && chmod 700 /tmp/runtime-kali && " +
+            "export DISPLAY=:0 PULSE_SERVER=tcp:127.0.0.1:4713 " +
+            "XDG_RUNTIME_DIR=/tmp/runtime-kali NO_AT_BRIDGE=1 GTK_A11Y=none LANG=C.UTF-8; " +
+            "exec dbus-launch --exit-with-session startxfce4"
+        val guestCommand = listOf(
+            "/usr/bin/env", "-i", "HOME=/home/kali", "USER=kali", "LOGNAME=kali",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "SHELL=/usr/bin/zsh", "TERM=xterm-256color", "LANG=C.UTF-8",
+            "DISPLAY=:0", "PULSE_SERVER=tcp:127.0.0.1:4713", "XDG_RUNTIME_DIR=/tmp/runtime-kali",
+            "/usr/bin/sudo", "-E", "-u", "kali", "/bin/bash", "-lc", sessionScript,
+        )
+        val process = createKaliProotBuilder(rootfs, "/home/kali", guestCommand).start()
+        sessionProcess = process
+        Thread({
+            runCatching {
+                process.inputStream.bufferedReader().forEachLine { Log.d(TAG, "KALI PROOT DESKTOP: $it") }
+            }.onFailure { Log.w(TAG, "Kali desktop output reader failed", it) }
+        }, "KaliProotDesktopOutput").apply { isDaemon = true; start() }
+        Thread({
+            runCatching { process.waitFor() }
+            if (sessionProcess === process) {
+                sessionProcess = null
+                stopPulseAudio()
+            }
+        }, "KaliProotDesktopExit").apply { isDaemon = true; start() }
+        Log.i(TAG, "Started rootless Kali XFCE through DroidDesk PRoot")
+    }
+
 
     private fun writeDebianLauncher() {
         val launcher = File(binDir, "start-debian")
