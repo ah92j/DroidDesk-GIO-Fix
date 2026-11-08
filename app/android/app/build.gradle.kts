@@ -112,3 +112,8 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Pure-Java XZ decoder for Android-safe Kali rootfs extraction.
+    implementation("org.tukaani:xz:1.12")
+}
