@@ -95,6 +95,44 @@ internal object ArchivePathValidator {
     }
 
     /**
+     * Convert an archive-root hardlink target into a path relative to the new
+     * symlink's parent directory. The result is checked to stay inside rootfs.
+     */
+    fun relativeSymlinkTarget(entryName: String, targetPath: String): String {
+        val safeEntry = normalizeEntryName(entryName, stripLeadingParents = false)
+        val safeTarget = normalizeEntryName(targetPath, stripLeadingParents = false)
+        if (safeEntry.isEmpty() || safeTarget.isEmpty()) {
+            throw SecurityException("Hardlink path resolves to the root directory")
+        }
+
+        val parentComponents = safeEntry.substringBeforeLast('/', "")
+            .split('/').filter { it.isNotEmpty() }
+        val targetComponents = safeTarget.split('/').filter { it.isNotEmpty() }
+
+        var common = 0
+        while (
+            common < parentComponents.size &&
+            common < targetComponents.size &&
+            parentComponents[common] == targetComponents[common]
+        ) {
+            common++
+        }
+
+        val relative = buildList {
+            repeat(parentComponents.size - common) { add("..") }
+            addAll(targetComponents.drop(common))
+        }.joinToString("/").ifEmpty { "." }
+
+        val resolved = if (parentComponents.isEmpty()) {
+            relative
+        } else {
+            parentComponents.joinToString("/") + "/" + relative
+        }
+        normalizeEntryName(resolved, stripLeadingParents = false)
+        return relative
+    }
+
+    /**
      * Validate a symbolic-link target relative to the link's containing folder.
      * Guest-root absolute links are rewritten as safe relative links so archive
      * extraction never encounters a host-absolute symlink destination.
