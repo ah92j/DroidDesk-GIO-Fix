@@ -25,7 +25,7 @@ internal object KaliInstallCoordinator {
     }
 
     fun report(value: Double, message: String) = synchronized(lock) {
-        progress = value.coerceIn(0.0, 1.0)
+        progress = if (value < 0.0) -1.0 else value.coerceIn(0.0, 1.0)
         status = message
     }
 
