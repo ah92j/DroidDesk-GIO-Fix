@@ -178,6 +178,24 @@ class HomeScreen extends StatelessWidget {
                                 const SizedBox(height: 10),
                               ],
 
+                              // Add Kali to an already-configured non-root DroidDesk.
+                              if (!state.hasRoot && state.installedDistro != 'kali-proot') ...[
+                                _ActionCard(
+                                  icon: Icons.security_rounded,
+                                  title: 'Install Kali Linux',
+                                  subtitle: 'Add Kali inside DroidDesk — no Termux needed',
+                                  color: DroidTheme.accent,
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => const DEInstallScreen(installKali: true),
+                                      ),
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                              ],
+
                               // ── Launch Desktop / Reconnect ──
                               if (state.isRunning)
                                 Padding(
