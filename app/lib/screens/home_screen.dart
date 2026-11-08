@@ -242,8 +242,12 @@ class HomeScreen extends StatelessWidget {
                                 subtitle: 'Open the Linux command line',
                                 color: DroidTheme.secondary,
                                 onTap: () {
-                                  state.useNativeTerminal();
-                                  _showTerminal(context, state);
+                                  if (state.installedDistro == 'kali-proot') {
+                                    _showKaliTerminal(context, state);
+                                  } else {
+                                    state.useNativeTerminal();
+                                    _showTerminal(context, state);
+                                  }
                                 },
                               ),
 
@@ -457,6 +461,8 @@ class HomeScreen extends StatelessWidget {
         return 'Ubuntu 24.04 (chroot)';
       case 'kali-chroot':
         return 'Kali Linux (chroot)';
+      case 'kali-proot':
+        return 'Kali Linux (PRoot)';
       case 'ubuntu':
         return 'Ubuntu 24.04';
       case 'alpine':
@@ -738,6 +744,13 @@ class HomeScreen extends StatelessWidget {
       state.startDebianShell();
     });
   }
+
+  void _showKaliTerminal(BuildContext context, AppState state) {
+    _showTerminal(context, state);
+    Future<void>.delayed(const Duration(milliseconds: 150), () {
+      state.startKaliShell();
+    });
+  }
 }
 
 /// Simple terminal bottom sheet with command execution.
@@ -941,7 +954,7 @@ class _TerminalSheetState extends State<_TerminalSheet> {
   Widget build(BuildContext context) {
     final state = widget.state;
     final runtime = state.isProotTerminal
-        ? 'Debian PRoot'
+        ? state.prootTerminalName
         : state.hasRoot
             ? 'chroot · ${_distroLabel(state.installedDistro)}'
             : 'Native · Termux';
