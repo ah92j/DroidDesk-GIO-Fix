@@ -15,6 +15,8 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+      - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/KaliInstallCoordinatorTest.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliInstallCoordinator.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLine.kt'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLineTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
@@ -54,6 +56,14 @@ jobs:
           runtime = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
           ).read_text()
+          kali_coordinator = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliInstallCoordinator.kt'
+          ).read_text()
+          kali_coordinator_tests = Path(
+              'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/KaliInstallCoordinatorTest.kt'
+          ).read_text()
+          platform_bridge = Path('app/lib/services/platform_bridge.dart').read_text()
+          app_state = Path('app/lib/state/app_state.dart').read_text()
           proot_builder = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLine.kt'
           ).read_text()
@@ -165,6 +175,16 @@ jobs:
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
+          if 'KaliInstallCoordinator.tryStart()' not in runtime or 'KaliInstallCoordinator.finish(succeeded)' not in runtime:
+              missing.append('Kali install single-operation guard')
+          if 'fun snapshot()' not in kali_coordinator or 'private var running = false' not in kali_coordinator:
+              missing.append('Kali install process state')
+          if 'getKaliInstallStatus' not in platform_bridge or "'getKaliInstallStatus'" not in platform_bridge:
+              missing.append('Flutter bridge for Kali install state')
+          if 'DroidDeskPlatform.getKaliInstallStatus()' not in app_state or "runtimeStatus['distro'] == 'kali-proot'" not in app_state:
+              missing.append('Flutter resume/complete detection for Kali setup')
+          if '@Test' not in kali_coordinator_tests or 'preventsASecondInstallWhileTheFirstOneIsRunning' not in kali_coordinator_tests:
+              missing.append('Kali concurrent install prevention unit test')
           if 'KaliProotCommandLine.build(' not in runtime:
               missing.append('Kali PRoot command builder integration')
           if 'fun build(' not in proot_builder or 'addAll(guestCommand)' not in proot_builder:
@@ -241,7 +261,7 @@ jobs:
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
-          if 'version: 1.4.3+18' not in pubspec:
+          if 'version: 1.4.4+19' not in pubspec:
               missing.append('version: 1.4.0+15')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -389,7 +409,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.3-arm64
+          name: DroidDesk-1.4.4-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
