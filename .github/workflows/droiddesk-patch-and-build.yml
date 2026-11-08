@@ -265,6 +265,7 @@ jobs:
               'APT::Keep-Downloaded-Packages=true',
               'run_with_package_heartbeat',
               'policy-rc.d',
+              'recover_optional_stalled_theme',
               'URIs: $repository_uri',
               '/var/cache/apt/archives/partial',
               '/var/lib/apt/lists/partial',
@@ -307,6 +308,13 @@ jobs:
               missing.append('emit dpkg package-configuration heartbeats')
           if 'policy-rc.d' not in kali_setup_script:
               missing.append('prevent service startup inside PRoot during package configuration')
+          if 'recover_optional_stalled_theme' not in kali_setup_script:
+              missing.append('recover an incomplete optional Papirus package before dpkg resumes')
+          apt_packages_start = kali_setup_script.find('APT_PACKAGES=(')
+          apt_packages_end = kali_setup_script.find(')', apt_packages_start)
+          apt_package_list = kali_setup_script[apt_packages_start:apt_packages_end]
+          if 'papirus-icon-theme' in apt_package_list:
+              missing.append('keep optional Papirus icon cache generation out of the core Kali install')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
