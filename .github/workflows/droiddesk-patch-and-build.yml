@@ -250,7 +250,7 @@ jobs:
               '240, onLog',
           ]
           required_kali_script = [
-              'apt-get update',
+              'apt-get "${APT_OPTIONS[@]}" update',
               'kali-linux-default',
               'xfce4',
               'DEBIAN_FRONTEND=noninteractive',
