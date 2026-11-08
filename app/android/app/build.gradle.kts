@@ -112,8 +112,3 @@ android {
 flutter {
     source = "../.."
 }
-
-dependencies {
-    // Pure-Java XZ decoder; avoids launching xz from Android app storage.
-    implementation("org.tukaani:xz:1.12")
-}
