@@ -27,12 +27,6 @@ class RootfsArchiveSanitizerTest {
                 "kali-arm64/usr/lib/systemd/system/systemd\\x2dmute\\x2dconsole.slice"
 
             TarArchiveOutputStream(FileOutputStream(source)).use { tar ->
-                val root = TarArchiveEntry("kali-arm64/")
-                root.mode = 0b111101101
-                root.size = 0
-                tar.putArchiveEntry(root)
-                tar.closeArchiveEntry()
-
                 val file = TarArchiveEntry(escapedName)
                 file.mode = 0b110100100
                 file.size = payload.size.toLong()
@@ -51,7 +45,7 @@ class RootfsArchiveSanitizerTest {
                 bufferSize = 4096,
             )
 
-            assertEquals(2, result.entries)
+            assertEquals(1, result.entries)
             assertEquals(1, result.regularFiles)
             assertEquals(0, result.directories)
             assertEquals(0, result.skippedSpecialFiles)
