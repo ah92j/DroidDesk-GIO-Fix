@@ -15,6 +15,8 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLine.kt'
+      - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLineTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizer.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
@@ -51,6 +53,12 @@ jobs:
 
           runtime = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+          ).read_text()
+          proot_builder = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLine.kt'
+          ).read_text()
+          proot_tests = Path(
+              'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/KaliProotCommandLineTest.kt'
           ).read_text()
           rootfs_manager = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsManager.kt'
@@ -157,6 +165,14 @@ jobs:
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
+          if 'KaliProotCommandLine.build(' not in runtime:
+              missing.append('Kali PRoot command builder integration')
+          if 'KaliProotCommandLine.build(' not in proot_builder or 'addAll(guestCommand)' not in proot_builder:
+              missing.append('Kali PRoot command builder implementation')
+          if 'workingDirectory, "--"' in runtime or '-w /home/kali --' in runtime:
+              missing.append('unsupported -- delimiter in a Kali PRoot launch path')
+          if '@Test' not in proot_tests or 'assertFalse(command.contains("--"))' not in proot_tests:
+              missing.append('Kali PRoot argument separator regression test')
           required_archive_manager = [
               'RootfsArchiveSanitizer.sanitize(',
               'stripTopLevelDirectory = if (distro == "kali") "kali-arm64" else null',
@@ -225,7 +241,7 @@ jobs:
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
 
-          if 'version: 1.4.2+17' not in pubspec:
+          if 'version: 1.4.3+18' not in pubspec:
               missing.append('version: 1.4.0+15')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
@@ -373,7 +389,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.2-arm64
+          name: DroidDesk-1.4.3-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
