@@ -274,7 +274,25 @@ class LinuxRuntime(private val context: Context) {
                     "/usr/bin/env", "-i", "HOME=/root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "LANG=C.UTF-8", "/bin/bash", "-lc",
-                    "dpkg-query -W -f='\${'
+                    "dpkg-query -W -f='\\${Status}' kali-linux-default | grep -qx 'install ok installed' && " +
+                        "test -x /usr/bin/startxfce4 && test -x /usr/bin/dbus-launch",
+                ),
+                2, onLog,
+            )
+            if (verify.exitCode != 0) {
+                throw IllegalStateException(
+                    "Kali package verification failed: ${verify.output.takeLast(1200)}"
+                )
+            }
+            if (!File(rootfs, "etc/passwd").readLines().any { it.startsWith("kali:") }) {
+                throw IllegalStateException("The Kali rootfs does not contain the standard kali user")
+            }
+            File(rootfs, ".chroot_de_installed").writeText("xfce4\n")
+            File(rootfs, ".kali_default_tools_installed").writeText("kali-linux-default\n")
+            writeKaliLauncher(rootfs)
+            onProgress(1.0, "Kali default tools and XFCE installed inside DroidDesk")
+            Log.i(TAG, "Rootless Kali default toolset and XFCE installed: ${rootfs.absolutePath}")
+            true
             true
         } catch (error: Exception) {
             Log.e(TAG, "Rootless Kali desktop installation failed", error)
