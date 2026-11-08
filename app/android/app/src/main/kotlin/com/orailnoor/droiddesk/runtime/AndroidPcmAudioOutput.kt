@@ -85,8 +85,11 @@ internal object AndroidPcmAudioOutput {
                 throw IOException("Android AudioTrack rejected the 48 kHz stereo PCM format ($minimum)")
             }
 
-            val bufferSize = (minimum * 4)
-                .coerceIn(16 * 1024, 128 * 1024)
+            // Keep the Android playback queue modest to reduce A/V latency.
+            // Two minimum buffers retain scheduling headroom without the old
+            // 4x buffer, which could hold several hundred milliseconds of audio.
+            val bufferSize = (minimum * 2)
+                .coerceIn(8 * 1024, 64 * 1024)
 
             track = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -125,7 +128,7 @@ internal object AndroidPcmAudioOutput {
 
             Log.i(
                 TAG,
-                "Android AudioTrack ready: ${SAMPLE_RATE}Hz, stereo PCM16, FIFO=${fifo.absolutePath}",
+                "Android AudioTrack ready: ${SAMPLE_RATE}Hz, stereo PCM16, buffer=${bufferSize}B, FIFO=${fifo.absolutePath}",
             )
             return true
         } catch (error: Exception) {
@@ -138,7 +141,8 @@ internal object AndroidPcmAudioOutput {
     }
 
     private fun consumePcm(session: Session) {
-        val buffer = ByteArray(16 * 1024)
+        // Smaller writes prevent large PCM bursts from accumulating ahead of video.
+        val buffer = ByteArray(4 * 1024)
 
         while (session.running.get()) {
             var stream: FileInputStream? = null
