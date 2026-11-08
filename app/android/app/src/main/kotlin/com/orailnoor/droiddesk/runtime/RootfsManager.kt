@@ -510,7 +510,6 @@ class RootfsManager(private val context: Context) {
                     throw IllegalStateException("Could not create temporary extraction directory")
                 }
 
-                val listingLog = File(context.cacheDir, "rootfs-archive-list.txt")
                 val extractionLog = File(context.cacheDir, "rootfs-extract.log")
                 val outputArchive = File(context.cacheDir, "rootfs-${distro}-sanitized.tar")
                 sanitizedArchive = outputArchive
@@ -521,6 +520,7 @@ class RootfsManager(private val context: Context) {
                     sourceArchive = archive,
                     targetTar = outputArchive,
                     xzCompressed = xzArchive,
+                    stripTopLevelDirectory = if (distro == "kali") "kali-arm64" else null,
                     maxEntries = MAX_ARCHIVE_ENTRIES,
                     maxExpandedBytes = MAX_EXPANDED_ARCHIVE_BYTES,
                     bufferSize = BUFFER_SIZE,
@@ -532,20 +532,12 @@ class RootfsManager(private val context: Context) {
                         "specialSkipped=${sanitized.skippedSpecialFiles}, expanded=${sanitized.expandedBytes}",
                 )
 
-                report(onProgress, 0.18, "Checking normalized archive entries...")
-                val listExit = runLoggedProcess(
-                    listOf("tar", "-t", "-f", outputArchive.absolutePath),
-                    listingLog,
-                    30L,
-                )
-                if (listExit != 0) {
-                    throw IllegalStateException("Normalized archive listing failed (exit $listExit): ${readLogTail(listingLog)}")
-                }
-                validateArchiveListing(listingLog)
-
-                report(onProgress, 0.24, "Extracting ${DISTRO_NAMES[distro]}...")
+                report(onProgress, 0.22, "Extracting the verified root filesystem...")
                 val extractExit = runLoggedProcess(
-                    listOf("tar", "-x", "-f", outputArchive.absolutePath, "-C", stagingRootfsDir.absolutePath),
+                    listOf(
+                        "tar", "-x", "-f", outputArchive.absolutePath,
+                        "-C", stagingRootfsDir.absolutePath, "--no-same-owner",
+                    ),
                     extractionLog,
                     ARCHIVE_PROCESS_TIMEOUT_MINUTES,
                 )
@@ -573,7 +565,6 @@ class RootfsManager(private val context: Context) {
                     Log.w(TAG, "Verified rootfs archive could not be removed after extraction")
                 }
 
-                listingLog.delete()
                 extractionLog.delete()
                 report(onProgress, 1.0, "${DISTRO_NAMES[distro]} setup complete")
                 Log.i(TAG, "Rootfs extraction completed for $distro (${getRootfsSizeMB()} MB)")
@@ -591,38 +582,6 @@ class RootfsManager(private val context: Context) {
                 operationLock.unlock()
             }
         }
-    }
-
-    /** Reject absolute paths, parent traversal and abnormal archive entry names. */
-    private fun validateArchiveListing(listingFile: File) {
-        if (!listingFile.isFile) throw SecurityException("Archive listing was not created")
-        if (listingFile.length() > 128L * 1024L * 1024L) {
-            throw SecurityException("Archive contains an excessively large file listing")
-        }
-
-        var count = 0
-        listingFile.bufferedReader().useLines { lines ->
-            lines.forEach { rawLine ->
-                val name = rawLine.removeSuffix("\r")
-                if (name.isEmpty()) return@forEach
-
-                count++
-                if (count > MAX_ARCHIVE_ENTRIES) {
-                    throw SecurityException("Archive contains too many entries")
-                }
-                if (
-                    name.startsWith("/") ||
-                    Regex("^[A-Za-z]:").containsMatchIn(name) ||
-                    name.contains('\\') ||
-                    name.any { it.isISOControl() }
-                ) {
-                    throw SecurityException("Blocked unsafe archive entry")
-                }
-
-                ArchivePathValidator.normalizeEntryName(name, stripLeadingParents = false)
-            }
-        }
-        if (count == 0) throw SecurityException("Archive contains no entries")
     }
 
     private fun runLoggedProcess(command: List<String>, outputFile: File, timeoutMinutes: Long): Int {
