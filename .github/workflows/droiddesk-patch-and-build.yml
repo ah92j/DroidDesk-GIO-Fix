@@ -2,25 +2,7 @@ name: DroidDesk Permanent Release Build
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - security/hardening-phase-1
-    paths:
-      - '.github/workflows/droiddesk-patch-and-build.yml'
-      - 'app/android/app/build.gradle.kts'
-      - 'app/android/app/src/main/AndroidManifest.xml'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootShell.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ChrootRuntime.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
-      - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
-      - 'app/lib/state/app_state.dart'
-      - 'app/lib/screens/setup/setup_progress.dart'
-      - 'app/lib/screens/home_screen.dart'
-      - 'app/pubspec.yaml'
+
 
 permissions:
   contents: read
