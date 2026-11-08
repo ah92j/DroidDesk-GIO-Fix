@@ -1308,8 +1308,8 @@ class LinuxRuntime(private val context: Context) {
 
         if (strTabFileOffset == null) return false
 
-        val origin = "${ORIGIN}"
-        val relativeLib = "${ORIGIN}/../lib"
+        val origin = "\$ORIGIN"
+        val relativeLib = "\$ORIGIN/../lib"
         val replacement = when {
             newPath.length <= oldPath.length -> newPath
             file.parentFile?.absolutePath == newPath -> origin
