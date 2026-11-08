@@ -104,8 +104,14 @@ run_apt_transaction() {
   local repository_uri="$1"
 
   echo "[DroidDesk Kali] Using official repository: $repository_uri"
-  configure_official_kali_source "$repository_uri"
-  prepare_apt_directories
+  if ! configure_official_kali_source "$repository_uri"; then
+    echo "[DroidDesk Kali] Could not configure the official repository: $repository_uri"
+    return 1
+  fi
+  if ! prepare_apt_directories; then
+    echo "[DroidDesk Kali] Could not prepare APT cache directories."
+    return 1
+  fi
 
   echo "[DroidDesk Kali] Updating package indexes (automatic retries enabled)..."
   if ! apt-get "${APT_OPTIONS[@]}" update; then
