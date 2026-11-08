@@ -53,7 +53,8 @@ class RootfsArchiveSanitizerTest {
 
             assertEquals(2, result.entries)
             assertEquals(1, result.regularFiles)
-            assertEquals(1, result.skippedSpecialFiles.coerceAtMost(1) * 0 + result.regularFiles)
+            assertEquals(0, result.directories)
+            assertEquals(0, result.skippedSpecialFiles)
 
             TarArchiveInputStream(FileInputStream(sanitized)).use { tar ->
                 val entry = tar.nextEntry
