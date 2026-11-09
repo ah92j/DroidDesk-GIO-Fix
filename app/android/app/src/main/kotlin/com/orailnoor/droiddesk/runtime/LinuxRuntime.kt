@@ -398,8 +398,10 @@ class LinuxRuntime(private val context: Context) {
         guestCommand: List<String>,
         timeoutMinutes: Long,
         onOutput: (String) -> Unit,
+        onProcessStarted: (Process) -> Unit = {},
     ): KaliProotResult {
         val process = createKaliProotBuilder(rootfs, workingDirectory, guestCommand).start()
+        onProcessStarted(process)
         val output = StringBuilder()
         val reader = Thread({
             runCatching {
@@ -862,7 +864,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v7")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v8")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -902,7 +904,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v7").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v8").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -952,19 +954,14 @@ class LinuxRuntime(private val context: Context) {
             Log.w(TAG, "XFCE D-Bus address was not saved; settings will refresh next launch")
             return
         }
+        // Reload the desktop surface without changing any persisted XFCE setting.
+        // In particular, never write last-image, panel properties or desktop icon positions
+        // here: this method runs after every desktop launch, not only after an APK upgrade.
         val refreshScript = """
             set +e
             export DISPLAY=:0 HOME=/home/kali XDG_RUNTIME_DIR=/tmp/runtime-kali
-            xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/image-path --set '/usr/share/xfce4/backdrops/Kali Linux'
-            xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/workspace0/last-image --set '/usr/share/xfce4/backdrops/Kali Linux/kali-cubes2-16x9.jpg'
-            xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/workspace0/image-style --set 5
-            xfconf-query -c xfce4-desktop -p /desktop-icons/file-icons/show-trash --set true
-            xfconf-query -c xfwm4 -p /general/use_compositing --set true
-            xfconf-query -c xfce4-panel -p /panels/panel-2/background-style --set 1
-            xfconf-query -c xfce4-panel -p /panels/panel-2/background-rgba -t double -t double -t double -t double -s 0.965 -s 0.961 -s 0.957 -s 0
             xfdesktop --reload
-            xfce4-panel -r
-            echo '[Kali Linux] Wallpaper, Trash and transparent dock refreshed.'
+            echo '[Kali Linux] Desktop refreshed without modifying user settings.'
         """.trimIndent()
         val guestCommand = listOf(
             "/usr/bin/env", "-i",
@@ -2792,6 +2789,276 @@ class LinuxRuntime(private val context: Context) {
             onProgress?.invoke(-1.0, "Installation failed. Review the package log and retry.")
         }
         return verified
+    }
+
+    // ── Kali PRoot package store (the Add applications screen) ──
+
+    private val kaliStoreVisiblePackages = setOf(
+        "firefox-esr", "chromium", "code-oss", "libreoffice", "gimp", "blender",
+        "vlc", "mpv", "thunderbird", "filezilla", "geany", "inkscape", "audacity",
+        "evince", "htop", "btop", "fastfetch", "git", "python3", "python3-pip",
+        "nodejs", "imagemagick", "tmux", "zsh", "fish", "p7zip-full",
+        "file-roller", "kali-tweaks",
+    )
+
+    private fun kaliStoreCommand(script: String): List<String> = listOf(
+        "/usr/bin/env", "-i",
+        "HOME=/root", "USER=root", "LOGNAME=root",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG=C.UTF-8", "TERM=dumb", "DEBIAN_FRONTEND=noninteractive",
+        "BASH_ENV=/dev/null", "/bin/bash", "-c", script,
+    )
+
+    private fun runKaliStoreCommand(
+        rootfs: File,
+        script: String,
+        timeoutMinutes: Long = 30,
+        onProgress: (Double, String) -> Unit,
+    ): KaliProotResult {
+        val result = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = kaliStoreCommand(script),
+            timeoutMinutes = timeoutMinutes,
+            onOutput = { line ->
+                installLogSink?.invoke(line)
+                if (line.isNotBlank()) onProgress(0.55, line.trim().take(180))
+            },
+            onProcessStarted = { process -> activeCommandProcess = process },
+        )
+        if (activeCommandProcess != null && !activeCommandProcess!!.isAlive) {
+            activeCommandProcess = null
+        }
+        return result
+    }
+
+    private fun kaliInstalledPackageRecords(rootfs: File): List<Map<String, Any>> {
+        val script = "dpkg-query -W -f='\\${Package}\\\\t\\${Version}\\\\t\\${Architecture}\\\\t\\${Status}\\\\t\\${Section}\\\\n' 2>/dev/null || true"
+        val result = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = kaliStoreCommand(script),
+            timeoutMinutes = 3,
+            onOutput = {},
+        )
+        return result.output.lineSequence().mapNotNull { line ->
+            val fields = line.split('\t')
+            if (fields.size < 5 || fields[3] != "install ok installed") return@mapNotNull null
+            val name = fields[0].substringBefore(':').trim()
+            if (!isSafePackageName(name)) return@mapNotNull null
+            val descriptionFile = File(rootfs, "var/lib/dpkg/info/$name.list")
+            val gui = descriptionFile.isFile && descriptionFile.useLines { entries ->
+                entries.any { it.contains("/share/applications/") && it.endsWith(".desktop") }
+            }
+            val description = ""
+            mapOf(
+                "name" to name,
+                "description" to description,
+                "version" to fields[1],
+                "architecture" to fields[2],
+                "section" to fields[4].ifBlank { categoryForPackage(name, description) },
+                "installed" to true,
+                "gui" to gui,
+                "removable" to !isKaliStoreProtectedPackage(name),
+            )
+        }.distinctBy { it["name"] }
+    }
+
+    fun searchKaliPackages(rootfs: File, query: String, limit: Int = 60): List<Map<String, Any>> {
+        if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
+        val cleanQuery = query.trim().take(60)
+        if (!cleanQuery.matches(Regex("[A-Za-z0-9+._ -]*"))) return emptyList()
+        val pattern = cleanQuery.ifEmpty { "." }
+        val script = "test \\"$(dpkg --print-architecture)\\" = arm64 && apt-cache search --names-only '$pattern'"
+        val result = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = kaliStoreCommand(script),
+            timeoutMinutes = 3,
+            onOutput = {},
+        )
+        val installed = kaliInstalledPackageRecords(rootfs).associateBy { it["name"] as String }
+        return result.output.lineSequence().mapNotNull { line ->
+            val separator = line.indexOf(" - ")
+            if (separator <= 0) return@mapNotNull null
+            val name = line.substring(0, separator).substringBefore(':').trim()
+            if (!isSafePackageName(name)) return@mapNotNull null
+            val description = line.substring(separator + 3).trim()
+            val record = installed[name]
+            mapOf(
+                "name" to name,
+                "description" to description,
+                "version" to (record?.get("version") ?: ""),
+                "section" to (record?.get("section") ?: categoryForPackage(name, description)),
+                "installed" to (record != null),
+                "gui" to (record?.get("gui") ?: false),
+                "architecture" to "arm64",
+                "removable" to (record?.get("removable") ?: true),
+            )
+        }.distinctBy { it["name"] }.take(limit.coerceIn(1, 100)).toList()
+    }
+
+    fun getInstalledKaliPackages(rootfs: File, limit: Int = 500): List<Map<String, Any>> {
+        if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
+        return kaliInstalledPackageRecords(rootfs)
+            .filter { record -> (record["name"] as? String) in kaliStoreVisiblePackages }
+            .take(limit.coerceIn(1, 1000))
+    }
+
+    private fun resolveKaliStorePackage(packageName: String): String = when (packageName) {
+        "firefox" -> "firefox-esr"
+        "python" -> "python3"
+        else -> packageName
+    }
+
+    private fun isKaliStoreProtectedPackage(packageName: String): Boolean =
+        packageName in setOf(
+            "apt", "bash", "base-files", "base-passwd", "coreutils", "dpkg",
+            "kali-linux-default", "kali-desktop-core", "libc6", "login",
+            "sudo", "systemd", "xfce4", "xfce4-panel", "xfce4-session",
+            "xfdesktop4", "xfwm4",
+        )
+
+    fun installKaliStorePackage(
+        rootfs: File,
+        packageName: String,
+        onProgress: (Double, String) -> Unit,
+    ): Boolean {
+        val selected = resolveKaliStorePackage(packageName)
+        if (!isSafePackageName(selected) || !isKaliProotDesktopInstalled(rootfs)) {
+            onProgress(-1.0, "Invalid package or Kali desktop is not ready")
+            return false
+        }
+        if (kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }) {
+            onProgress(1.0, "$selected is already installed")
+            return true
+        }
+        onProgress(0.12, "Checking Kali ARM64 package availability...")
+        val script = """
+            set -Eeuo pipefail
+            native_arch="$(/usr/bin/dpkg --print-architecture)"
+            if [ "$native_arch" != "arm64" ]; then
+              echo "Refusing package transaction: Kali architecture is $native_arch, expected arm64."
+              exit 31
+            fi
+            package_name="$selected"
+            candidate_arch="$(apt-cache show "$package_name" 2>/dev/null |
+              awk '/^Architecture:/ {
+                if ($2 == "arm64") native=1
+                else if ($2 == "all") common=1
+              } END {
+                if (native) print "arm64"
+                else if (common) print "all"
+              }')"
+            if [ -z "$candidate_arch" ]; then
+              echo "No ARM64 or architecture-independent build of $package_name exists in the configured Kali repositories."
+              echo "Do not install its amd64/x86_64 file on this arm64 system."
+              exit 32
+            fi
+            if [ "$candidate_arch" = "arm64" ]; then
+              package_spec="$package_name:arm64"
+            else
+              package_spec="$package_name"
+            fi
+            echo "Installing $package_spec from Kali repositories."
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$package_spec"
+            dpkg-query -W -f='${Status}' "$package_name" | grep -qx 'install ok installed'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+
+    fun removeKaliStorePackage(
+        rootfs: File,
+        packageName: String,
+        onProgress: (Double, String) -> Unit,
+    ): Boolean {
+        val selected = resolveKaliStorePackage(packageName)
+        if (!isSafePackageName(selected) || isKaliStoreProtectedPackage(selected)) {
+            onProgress(-1.0, "This package is protected because Kali needs it to run")
+            return false
+        }
+        onProgress(0.2, "Removing $selected from Kali...")
+        val result = runKaliStoreCommand(
+            rootfs,
+            "DEBIAN_FRONTEND=noninteractive apt-get remove -y '$selected'",
+            timeoutMinutes = 20,
+            onProgress = onProgress,
+        )
+        val removed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).none { it["name"] == selected }
+        onProgress(if (removed) 1.0 else -1.0, if (removed) "$selected removed" else "$selected could not be removed")
+        return removed
+    }
+
+    fun getKaliUpgradablePackages(
+        rootfs: File,
+        refresh: Boolean = false,
+    ): List<Map<String, Any>> {
+        if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
+        val updatePrefix = if (refresh) "apt-get -o Acquire::Retries=3 update >/dev/null 2>&1 && " else ""
+        val result = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = kaliStoreCommand(
+                "$updatePrefix apt list --upgradable 2>/dev/null || true",
+            ),
+            timeoutMinutes = if (refresh) 10 else 3,
+            onOutput = {},
+        )
+        val installed = kaliInstalledPackageRecords(rootfs).associateBy { it["name"] as String }
+        return result.output.lineSequence().mapNotNull { line ->
+            if (!line.contains("[upgradable from:")) return@mapNotNull null
+            val name = line.substringBefore('/').trim()
+            if (!isSafePackageName(name) || isKaliStoreProtectedPackage(name)) return@mapNotNull null
+            val newVersion = line.substringAfter('/').split(' ').getOrNull(1).orEmpty()
+            val current = line.substringAfter("upgradable from: ").substringBefore(']').trim()
+            val record = installed[name]
+            mapOf(
+                "name" to name,
+                "version" to newVersion,
+                "currentVersion" to current,
+                "description" to "",
+                "section" to (record?.get("section") ?: categoryForPackage(name, "")),
+                "installed" to true,
+                "gui" to (record?.get("gui") ?: false),
+                "architecture" to "arm64",
+            )
+        }.distinctBy { it["name"] }.toList()
+    }
+
+    fun upgradeKaliStorePackages(
+        rootfs: File,
+        onProgress: (Double, String) -> Unit,
+    ): Boolean {
+        if (!isKaliProotDesktopInstalled(rootfs)) {
+            onProgress(-1.0, "Kali desktop is not ready")
+            return false
+        }
+        onProgress(0.1, "Refreshing Kali ARM64 repositories...")
+        val result = runKaliStoreCommand(
+            rootfs,
+            "set -Eeuo pipefail; test \\"$(dpkg --print-architecture)\\" = arm64; apt-get -o Acquire::Retries=3 update; DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+            timeoutMinutes = 60,
+            onProgress = onProgress,
+        )
+        val succeeded = result.exitCode == 0
+        onProgress(if (succeeded) 1.0 else -1.0, if (succeeded) "Kali package upgrades completed" else "Kali package upgrades failed")
+        return succeeded
     }
 
     // ── Native package store ──
