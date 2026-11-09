@@ -645,3 +645,5 @@ jobs:
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
+
+# Release trigger: Kali Linux 1.4.19 source fixes and desktop migration.
