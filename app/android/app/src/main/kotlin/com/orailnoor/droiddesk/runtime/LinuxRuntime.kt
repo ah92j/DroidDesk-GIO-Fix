@@ -457,8 +457,104 @@ class LinuxRuntime(private val context: Context) {
      * A live dbus-launch wrapper is not proof that XFCE is usable. Check the
      * actual window manager, panel and desktop processes before reusing it.
      */
+    /**
+     * A live PID list is not enough: XFCE may leave zombie/stale processes behind while
+     * X11 still shows only its blank root window. Require the real window manager,
+     * a mapped panel window, and a mapped desktop window before exposing the desktop.
+     */
+    private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String = """
+        set -u
+        export DISPLAY=:0
+
+        has_live_process() {
+          local name="${'$'}1" pid state
+          while IFS= read -r pid; do
+            [ -n "${'$'}pid" ] || continue
+            state="${'$'}(awk '{print ${'$'}3}' "/proc/${'$'}pid/stat" 2>/dev/null || true)"
+            case "${'$'}state" in Z|X|"") continue ;; esac
+            return 0
+          done < <(pgrep -x "${'$'}name" 2>/dev/null || true)
+          return 1
+        }
+
+        has_viewable_window() {
+          local wanted_class="${'$'}1" min_width="${'$'}2" min_height="${'$'}3"
+          local window_id wm_class info width height
+          for window_id in ${'$'}window_ids; do
+            wm_class="${'$'}(xprop -id "${'$'}window_id" WM_CLASS 2>/dev/null || true)"
+            printf '%s\n' "${'$'}wm_class" | grep -qi -- "${'$'}wanted_class" || continue
+            info="${'$'}(xwininfo -id "${'$'}window_id" 2>/dev/null || true)"
+            printf '%s\n' "${'$'}info" | grep -q 'Map State: IsViewable' || continue
+            width="${'$'}(printf '%s\n' "${'$'}info" | sed -n 's/^[[:space:]]*Width: //p' | head -n 1)"
+            height="${'$'}(printf '%s\n' "${'$'}info" | sed -n 's/^[[:space:]]*Height: //p' | head -n 1)"
+            [ "${'$'}{width:-0}" -ge "${'$'}min_width" ] 2>/dev/null || continue
+            [ "${'$'}{height:-0}" -ge "${'$'}min_height" ] 2>/dev/null || continue
+            return 0
+          done
+          return 1
+        }
+
+        check_xfce_session() {
+          local process wm_property wm_id wm_name window_tree
+          for process in xfce4-session xfwm4 xfce4-panel xfdesktop; do
+            if ! has_live_process "${'$'}process"; then
+              echo "[DroidDesk Kali] Required process is missing or not live: ${'$'}process"
+              return 1
+            fi
+          done
+
+          wm_property="${'$'}(xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true)"
+          wm_id="${'$'}(printf '%s\n' "${'$'}wm_property" | sed -nE 's/.*window id # (0x[[:xdigit:]]+).*/\1/p')"
+          if [ -z "${'$'}wm_id" ] || [ "${'$'}wm_id" = "0x0" ]; then
+            echo "[DroidDesk Kali] XFCE processes exist, but X11 has no active window-manager owner."
+            return 1
+          fi
+          wm_name="${'$'}(xprop -id "${'$'}wm_id" _NET_WM_NAME 2>/dev/null || xprop -id "${'$'}wm_id" WM_NAME 2>/dev/null || true)"
+          if ! printf '%s\n' "${'$'}wm_name" | grep -qiE 'xfwm4|xfwm'; then
+            echo "[DroidDesk Kali] X11 window-manager owner is not xfwm4: ${'$'}wm_name"
+            return 1
+          fi
+
+          window_tree="${'$'}(xwininfo -root -tree 2>/dev/null || true)"
+          window_ids="${'$'}(printf '%s\n' "${'$'}window_tree" | sed -nE 's/^[[:space:]]*(0x[[:xdigit:]]+).*/\1/p' | sort -u)"
+          if [ -z "${'$'}window_ids" ]; then
+            echo "[DroidDesk Kali] X11 returned no child windows for the XFCE desktop."
+            return 1
+          fi
+          if ! has_viewable_window xfce4-panel 100 20; then
+            echo "[DroidDesk Kali] xfce4-panel is running but has no mapped, viewable panel window."
+            return 1
+          fi
+          if ! has_viewable_window xfdesktop 100 100; then
+            echo "[DroidDesk Kali] xfdesktop is running but has no mapped desktop window."
+            return 1
+          fi
+
+          echo "[DroidDesk Kali] XFCE is visually ready: xfwm4 owns the X11 root, the panel is mapped, and the desktop window is visible."
+          return 0
+        }
+
+        if [ ${timeoutSeconds} -gt 0 ]; then
+          deadline=${'$'}((SECONDS + ${timeoutSeconds}))
+          while [ "${'$'}SECONDS" -le "${'$'}deadline" ]; do
+            if check_xfce_session; then exit 0; fi
+            sleep 1
+          done
+        else
+          if check_xfce_session; then exit 0; fi
+        fi
+
+        echo "[DroidDesk Kali] XFCE visual readiness failed. Current guest processes:"
+        ps -eo pid,stat,comm,args 2>/dev/null | grep -E 'xfce4-session|xfce4-panel|xfdesktop|xfwm4|dbus' | grep -v grep || true
+        echo "[DroidDesk Kali] X11 window-manager property:"
+        xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true
+        echo "[DroidDesk Kali] X11 window tree:"
+        xwininfo -root -tree 2>/dev/null || true
+        exit 1
+    """.trimIndent()
+
     fun isKaliDesktopProcessSetReady(rootfs: File): Boolean {
-        if (!isManagedKaliRootfs(rootfs) || !isRunning()) return false
+        if (!isManagedKaliRootfs(rootfs)) return false
         val probe = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/home/kali",
@@ -466,17 +562,19 @@ class LinuxRuntime(private val context: Context) {
                 "/usr/bin/env", "-i",
                 "HOME=/home/kali", "USER=kali", "LOGNAME=kali",
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                "DISPLAY=:0", "LANG=C.UTF-8", "BASH_ENV=/dev/null",
-                "/bin/bash", "-c",
-                "pgrep -x xfce4-session >/dev/null && " +
-                    "pgrep -x xfwm4 >/dev/null && " +
-                    "pgrep -x xfce4-panel >/dev/null && " +
-                    "pgrep -x xfdesktop >/dev/null",
+                "LANG=C.UTF-8", "TERM=dumb", "DISPLAY=:0", "BASH_ENV=/dev/null",
+                "/bin/bash", "-c", kaliDesktopHealthCheckScript(),
             ),
             timeoutMinutes = 1,
-            onOutput = { line -> Log.d(TAG, "Kali health probe: ${line.trimEnd()}") },
+            onOutput = { line -> Log.d(TAG, "Kali visual health probe: ${line.trimEnd()}") },
         )
-        return probe.exitCode == 0 && isRunning()
+        if (probe.exitCode != 0) {
+            lastKaliDesktopDiagnostic = probe.output.takeLast(5_000)
+            Log.w(TAG, "Kali XFCE visual health check failed: ${lastKaliDesktopDiagnostic.takeLast(1_800)}")
+            return false
+        }
+        lastKaliDesktopDiagnostic = ""
+        return true
     }
 
     /**
@@ -490,11 +588,11 @@ class LinuxRuntime(private val context: Context) {
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "BASH_ENV=/dev/null", "/bin/bash", "-c",
             """
-            for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch; do
+            for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch xfsettingsd xfconfd; do
               pkill -TERM -x "${'$'}name" 2>/dev/null || true
             done
             sleep 1
-            for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch; do
+            for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch xfsettingsd xfconfd; do
               pkill -KILL -x "${'$'}name" 2>/dev/null || true
             done
             """.trimIndent(),
@@ -510,29 +608,31 @@ class LinuxRuntime(private val context: Context) {
         if (!isKaliProotDesktopInstalled(rootfs)) {
             throw IllegalStateException("Kali XFCE is not installed inside DroidDesk")
         }
-        if (isRunning()) {
-            if (isKaliDesktopProcessSetReady(rootfs)) {
-                Log.i(TAG, "Kali XFCE session is healthy; reusing it")
-                return
-            }
-            Log.w(TAG, "Kali session wrapper is alive but XFCE is incomplete; cleaning stale desktop processes before restart")
-            stopKaliDesktopProcesses(rootfs)
-            sessionProcess?.let { stale ->
-                runCatching { stale.destroy() }
-                runCatching { if (!stale.waitFor(2, TimeUnit.SECONDS)) stale.destroyForcibly() }
-            }
-            sessionProcess = null
+        // The Android process may have been restarted while PRoot/XFCE survived.
+        // Never use the in-memory Process reference as proof that a guest session exists.
+        if (isKaliDesktopProcessSetReady(rootfs)) {
+            Log.i(TAG, "Kali XFCE session is visually healthy; reusing the existing desktop")
+            return
         }
+
+        // Run cleanup even when sessionProcess is null: Android may have recreated
+        // the app process and lost the Process handle for an orphaned PRoot session.
+        Log.w(TAG, "Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart")
+        stopKaliDesktopProcesses(rootfs)
+        sessionProcess?.let { stale ->
+            runCatching { stale.destroy() }
+            runCatching { if (!stale.waitFor(2, TimeUnit.SECONDS)) stale.destroyForcibly() }
+        }
+        sessionProcess = null
 
         val kaliHome = File(rootfs, "home/kali")
         if (!kaliHome.isDirectory) {
             throw IllegalStateException("Kali user home /home/kali is missing")
         }
 
-        // Native Termux profile files live outside the Kali PRoot rootfs.
-        if (XfceMobileProfile.needsInstall(kaliHome)) {
-            File(kaliHome, ".cache/sessions").deleteRecursively()
-        }
+        // Do not restore a half-written XFCE session after a failed or interrupted launch.
+        // This removes only desktop session metadata, never the user's files or Kali packages.
+        File(kaliHome, ".cache/sessions").deleteRecursively()
         val kaliWallpaper = File(
             kaliHome,
             ".local/share/backgrounds/droiddesk-ubuntu-touch.jpg",
@@ -630,21 +730,7 @@ class LinuxRuntime(private val context: Context) {
      * A partially running desktop is not considered ready without its panel.
      */
     fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 70): Boolean {
-        val probeScript = listOf(
-            "set -u",
-            "export DISPLAY=:0",
-            "echo \"[DroidDesk Kali] Checking X11 and waiting for the complete XFCE session...\"",
-            "if ! xdpyinfo -display :0 >/dev/null 2>&1; then echo \"X11 display :0 is not reachable inside Kali\"; exit 2; fi",
-            "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -x xfce4-session >/dev/null 2>&1 && pgrep -x xfwm4 >/dev/null 2>&1 && pgrep -x xfce4-panel >/dev/null 2>&1 && pgrep -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
-            "  echo \"[DroidDesk Kali] XFCE session manager, window manager, panel and desktop are ready.\"",
-            "  exit 0",
-            "fi",
-            "echo \"[DroidDesk Kali] XFCE readiness timeout. Current guest processes:\"",
-            "ps -eo pid,uid,comm,args 2>/dev/null | grep -E 'xfce4-session|xfce4-panel|xfdesktop|xfwm4|dbus' | grep -v grep || true",
-            "echo \"[DroidDesk Kali] XFCE config ownership:\"",
-            "ls -ld /home/kali /home/kali/.config /home/kali/.config/xfce4 /home/kali/.cache /home/kali/.local/share 2>/dev/null || true",
-            "exit 1",
-        ).joinToString("\n")
+        val probeScript = kaliDesktopHealthCheckScript(timeoutSeconds)
         val result = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/home/kali",
