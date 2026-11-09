@@ -2833,7 +2833,7 @@ class LinuxRuntime(private val context: Context) {
     }
 
     private fun kaliInstalledPackageRecords(rootfs: File): List<Map<String, Any>> {
-        val script = "dpkg-query -W -f='\\${Package}\\\\t\\${Version}\\\\t\\${Architecture}\\\\t\\${Status}\\\\t\\${Section}\\\\n' 2>/dev/null || true"
+        val script = "dpkg-query -W -f='${'$'}{Package}\\t${'$'}{Version}\\t${'$'}{Architecture}\\t${'$'}{Status}\\t${'$'}{Section}\\n' 2>/dev/null || true"
         val result = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/root",
@@ -2869,7 +2869,7 @@ class LinuxRuntime(private val context: Context) {
         val cleanQuery = query.trim().take(60)
         if (!cleanQuery.matches(Regex("[A-Za-z0-9+._ -]*"))) return emptyList()
         val pattern = cleanQuery.ifEmpty { "." }
-        val script = "test \\"$(dpkg --print-architecture)\\" = arm64 && apt-cache search --names-only '$pattern'"
+        val script = "test \"$(dpkg --print-architecture)\" = arm64 && apt-cache search --names-only '$pattern'"
         val result = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/root",
@@ -2936,13 +2936,13 @@ class LinuxRuntime(private val context: Context) {
         onProgress(0.12, "Checking Kali ARM64 package availability...")
         val script = """
             set -Eeuo pipefail
-            native_arch="$(/usr/bin/dpkg --print-architecture)"
-            if [ "$native_arch" != "arm64" ]; then
-              echo "Refusing package transaction: Kali architecture is $native_arch, expected arm64."
+            native_arch="${'$'}(/usr/bin/dpkg --print-architecture)"
+            if [ "${'$'}native_arch" != "arm64" ]; then
+              echo "Refusing package transaction: Kali architecture is ${'$'}native_arch, expected arm64."
               exit 31
             fi
             package_name="$selected"
-            candidate_arch="$(apt-cache show "$package_name" 2>/dev/null |
+            candidate_arch="$(apt-cache show "${'$'}package_name" 2>/dev/null |
               awk '/^Architecture:/ {
                 if ($2 == "arm64") native=1
                 else if ($2 == "all") common=1
@@ -2950,19 +2950,19 @@ class LinuxRuntime(private val context: Context) {
                 if (native) print "arm64"
                 else if (common) print "all"
               }')"
-            if [ -z "$candidate_arch" ]; then
-              echo "No ARM64 or architecture-independent build of $package_name exists in the configured Kali repositories."
+            if [ -z "${'$'}candidate_arch" ]; then
+              echo "No ARM64 or architecture-independent build of ${'$'}package_name exists in the configured Kali repositories."
               echo "Do not install its amd64/x86_64 file on this arm64 system."
               exit 32
             fi
-            if [ "$candidate_arch" = "arm64" ]; then
-              package_spec="$package_name:arm64"
+            if [ "${'$'}candidate_arch" = "arm64" ]; then
+              package_spec="${'$'}package_name:arm64"
             else
-              package_spec="$package_name"
+              package_spec="${'$'}package_name"
             fi
-            echo "Installing $package_spec from Kali repositories."
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$package_spec"
-            dpkg-query -W -f='${Status}' "$package_name" | grep -qx 'install ok installed'
+            echo "Installing ${'$'}package_spec from Kali repositories."
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${'$'}package_spec"
+            dpkg-query -W -f='${'$'}{Status}' "${'$'}package_name" | grep -qx 'install ok installed'
             update-desktop-database /usr/share/applications 2>/dev/null || true
             update-mime-database /usr/share/mime 2>/dev/null || true
         """.trimIndent()
@@ -3052,7 +3052,7 @@ class LinuxRuntime(private val context: Context) {
         onProgress(0.1, "Refreshing Kali ARM64 repositories...")
         val result = runKaliStoreCommand(
             rootfs,
-            "set -Eeuo pipefail; test \\"$(dpkg --print-architecture)\\" = arm64; apt-get -o Acquire::Retries=3 update; DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+            "set -Eeuo pipefail; test \"$(dpkg --print-architecture)\" = arm64; apt-get -o Acquire::Retries=3 update; DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
             timeoutMinutes = 60,
             onProgress = onProgress,
         )
