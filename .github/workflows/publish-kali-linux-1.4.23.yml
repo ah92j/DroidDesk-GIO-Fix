@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '7ae93fbb8de4bca814ee8e169e171a1a19ac9996' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == 'fdc87239361034da29bb14f270bbd77ccae3e394' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download the artifact from the successful 1.4.23 source build
