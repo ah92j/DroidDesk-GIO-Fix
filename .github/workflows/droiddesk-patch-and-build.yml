@@ -365,8 +365,8 @@ jobs:
               missing.append('all three Kali install/check commands use non-login bash -c')
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
-          if 'waitForKaliDesktopReady(File(filesDir, "rootfs"))' not in desktop_activity:
-              missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs')
+          if 'linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = 70)' not in desktop_activity:
+              missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs after session recovery')
           if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
