@@ -136,7 +136,7 @@ jobs:
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
               'PULSE_SINK=droiddesk_android',
               'PULSE_LATENCY_MSEC=80',
-              'MOZ_DISABLE_CONTENT_SANDBOX=1',
+              'MOZ_FAKE_NO_SANDBOX=1',
               'ensureKaliDesktopExperience(rootfs)',
               'gdk-pixbuf-csource --raw --name=droiddesk_png_probe',
               'gdk-pixbuf-csource --raw --name=droiddesk_svg_probe',
@@ -198,6 +198,7 @@ jobs:
               '<property name="show-home" type="bool" value="true"/>',
               '<property name="show-filesystem" type="bool" value="true"/>',
               '<property name="show-trash" type="bool" value="true"/>',
+              '<property name="use_compositing" type="bool" value="true"/>',
               '<property name="show-removable" type="bool" value="true"/>',
           ]
 
@@ -422,8 +423,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.18+35' not in pubspec:
-              missing.append('version: 1.4.16+32')
+          if 'version: 1.4.19+36' not in pubspec:
+              missing.append('version: 1.4.19+36')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -444,13 +445,15 @@ jobs:
               missing.append('Android launcher label must be Kali Linux')
           if "Text('Kali Linux', style: DroidTheme.headingMd)" not in home_screen:
               missing.append('home dashboard title must be Kali Linux')
-          for package in ['gvfs', 'gvfs-backends', 'kali-wallpapers-2026', 'pulseaudio-utils', 'libasound2-plugins']:
+          for package in ['gvfs', 'gvfs-backends', 'kali-wallpapers-2026', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'libavcodec-extra', 'gstreamer1.0-libav']:
               if package not in desktop_experience_script:
                   missing.append(f'desktop-experience migration must install {package}')
           if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
               missing.append('disable expensive Thunar thumbnails for mobile performance')
-          if 'use_compositing' not in desktop_experience_script:
-              missing.append('disable XFCE software compositing for mobile performance')
+          if 'name="use_compositing"' not in desktop_experience_script or 'false("/>)#\\1true\\2' not in desktop_experience_script:
+              missing.append('enable XFCE compositing so the transparent dock is not rendered black')
+          if 'desktop-experience-v3' not in desktop_experience_script or 'desktop-experience-v3' not in runtime:
+              missing.append('use the same v3 desktop migration marker in the script and runtime')
           if 'name="image-path"' not in desktop_experience_script:
               missing.append('expose Kali wallpaper directory in XFCE Desktop Settings')
 
@@ -634,7 +637,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.17-arm64
+          name: Kali-Linux-1.4.19-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

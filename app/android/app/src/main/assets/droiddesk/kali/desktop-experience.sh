@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v2"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v3"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -19,7 +19,7 @@ REQUIRED_PACKAGES=(
 
 if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$WALLPAPER_DIR" == "/usr/share/xfce4/backdrops/Kali Linux" ]]
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v2" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v3" ]]
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -49,18 +49,6 @@ for package in "${REQUIRED_PACKAGES[@]}"; do
   fi
 done
 
-# Official Google Chrome ARM64 repository; failure does not block XFCE startup.
-# Select Chrome only when its signed ARM64 package really installed; otherwise keep a working Firefox handler.
-helpers_file="/home/kali/.config/xfce4/helpers.rc"
-install -d -m 0755 "$(dirname "$helpers_file")"
-if package_installed google-chrome-stable && [[ -f /usr/share/applications/google-chrome.desktop ]]; then
-  printf 'FileManager=Thunar\nWebBrowser=google-chrome.desktop\n' > "$helpers_file"
-elif [[ -f /usr/share/applications/firefox-esr.desktop ]]; then
-  printf 'FileManager=Thunar\nWebBrowser=firefox-esr.desktop\n' > "$helpers_file"
-elif [[ -f /usr/share/applications/firefox.desktop ]]; then
-  printf 'FileManager=Thunar\nWebBrowser=firefox.desktop\n' > "$helpers_file"
-fi
-
 if ! package_installed google-chrome-stable; then
   key_tmp="$(mktemp)"
   if curl -fsSL --retry 3 --connect-timeout 20 https://dl.google.com/linux/linux_signing_key.pub -o "$key_tmp" &&
@@ -78,6 +66,40 @@ if ! package_installed google-chrome-stable; then
     echo "[Kali Linux] Could not verify Google's signing key; Chrome installation skipped."
   fi
   rm -f "$key_tmp"
+fi
+
+# Select Chrome only after its signed ARM64 package and desktop entry are verified.
+# Keep Firefox ESR as the safe default fallback when Chrome could not be installed.
+helpers_file="/home/kali/.config/xfce4/helpers.rc"
+install -d -m 0755 "$(dirname "$helpers_file")"
+if package_installed google-chrome-stable && [[ -f /usr/share/applications/google-chrome.desktop ]]; then
+  printf 'FileManager=Thunar\\nWebBrowser=google-chrome.desktop\\n' > "$helpers_file"
+elif [[ -f /usr/share/applications/firefox-esr.desktop ]]; then
+  printf 'FileManager=Thunar\\nWebBrowser=firefox-esr.desktop\\n' > "$helpers_file"
+elif [[ -f /usr/share/applications/firefox.desktop ]]; then
+  printf 'FileManager=Thunar\\nWebBrowser=firefox.desktop\\n' > "$helpers_file"
+fi
+
+# Firefox's audio helper sandbox is incompatible with this PRoot guest; leave content
+# sandbox policy unchanged and disable only the cubeb audio helper sandbox.
+for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
+  pref_dir="$firefox_root/defaults/pref"
+  if [[ -d "$pref_dir" ]]; then
+    cat > "$pref_dir/droiddesk-media.js" <<'FIREFOX_PREFS'
+pref("media.cubeb.sandbox", false);
+FIREFOX_PREFS
+    chmod 0644 "$pref_dir/droiddesk-media.js"
+  fi
+done
+if [[ -d /home/kali/.mozilla/firefox ]]; then
+  while IFS= read -r -d '' profile_dir; do
+    user_prefs="$profile_dir/user.js"
+    if [[ -f "$user_prefs" ]] && grep -q '^user_pref("media.cubeb.sandbox"' "$user_prefs"; then
+      sed -i 's#^user_pref("media.cubeb.sandbox".*#user_pref("media.cubeb.sandbox", false);#' "$user_prefs"
+    else
+      printf '\nuser_pref("media.cubeb.sandbox", false);\n' >> "$user_prefs"
+    fi
+  done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
 fi
 
 # Collect Kali wallpapers into one selectable XFCE folder.
@@ -122,13 +144,13 @@ if [[ -f "$panel_xml" ]]; then
   sed -i '/<property name="panel-2" type="empty">/,/<property name="plugin-ids"/ s#<property name="background-style" type="uint" value="[0-9]*"/>#<property name="background-style" type="uint" value="0"/>#' "$panel_xml"
 fi
 
-# Keep XFCE software compositing disabled; the Android X11 surface already composites.
+# Keep XFCE compositing enabled so the transparent bottom panel does not render black.
 xfwm_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
 if [[ -f "$xfwm_xml" ]]; then
   if grep -q 'name="use_compositing"' "$xfwm_xml"; then
-    sed -i -E 's#(<property name="use_compositing" type="bool" value=")true("/>)#\1false\2#' "$xfwm_xml"
+    sed -i -E 's#(<property name="use_compositing" type="bool" value=")false("/>)#\1true\2#' "$xfwm_xml"
   else
-    sed -i '/<property name="general" type="empty">/a\            <property name="use_compositing" type="bool" value="false"/>' "$xfwm_xml"
+    sed -i '/<property name="general" type="empty">/a\            <property name="use_compositing" type="bool" value="true"/>' "$xfwm_xml"
   fi
 fi
 

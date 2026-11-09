@@ -212,8 +212,8 @@ object XfceMobileProfile {
             <property name="wrap_windows" type="bool" value="false"/>
             <property name="easy_click" type="string" value="Alt"/>
             <property name="show_dock_shadow" type="bool" value="false"/>
-            <!-- Disable software-heavy compositing in the Android/PRoot X11 session. -->
-            <property name="use_compositing" type="bool" value="false"/>
+            <!-- Required for the alpha-transparent bottom launcher panel. -->
+            <property name="use_compositing" type="bool" value="true"/>
           </property>
         </channel>
     """.trimIndent() + "\n"

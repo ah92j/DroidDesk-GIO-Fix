@@ -1,11 +1,11 @@
-name: Publish Kali Linux 1.4.17 Direct APK
+name: Publish Kali Linux 1.4.19 Direct APK
 
 on:
   push:
     branches:
       - security/hardening-phase-1
     paths:
-      - '.github/workflows/publish-kali-linux-1.4.17.yml'
+      - '.github/workflows/publish-kali-linux-1.4.19.yml'
 
 permissions:
   actions: read
@@ -15,18 +15,28 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Download the verified Kali Linux 1.4.17 ARM64 artifact
+      - name: Find the latest successful ARM64 release build
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          BUILD_RUN_ID="$(gh run list \
+            --repo ah92j/DroidDesk-GIO-Fix \
+            --workflow droiddesk-patch-and-build.yml \
+            --branch security/hardening-phase-1 \
+            --status success \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+          test -n "$BUILD_RUN_ID"
+          echo "Using successful source build: $BUILD_RUN_ID"
+
           DOWNLOAD_DIR="$RUNNER_TEMP/kali-linux-apk"
           mkdir -p "$DOWNLOAD_DIR"
-
-          gh run download 42675359544 \
+          gh run download "$BUILD_RUN_ID" \
             --repo ah92j/DroidDesk-GIO-Fix \
-            --name Kali-Linux-1.4.17-arm64 \
+            --name Kali-Linux-1.4.19-arm64 \
             --dir "$DOWNLOAD_DIR"
 
           APK="$(find "$DOWNLOAD_DIR" -type f -name '*.apk' -print -quit)"
@@ -39,9 +49,9 @@ jobs:
             exit 1
           fi
 
-          cp "$APK" Kali-Linux-1.4.17-arm64.apk
+          cp "$APK" Kali-Linux-1.4.19-arm64.apk
           echo "APK SHA-256:"
-          sha256sum Kali-Linux-1.4.17-arm64.apk
+          sha256sum Kali-Linux-1.4.19-arm64.apk
 
       - name: Publish stable direct download
         shell: bash
@@ -49,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          FILE_NAME="Kali-Linux-1.4.17-arm64.apk"
+          FILE_NAME="Kali-Linux-1.4.19-arm64.apk"
           PUBLISH_DIR="$RUNNER_TEMP/kali-linux-apk-download"
           mkdir -p "$PUBLISH_DIR"
           cp "$FILE_NAME" "$PUBLISH_DIR/$FILE_NAME"
@@ -58,7 +68,7 @@ jobs:
           git -C "$PUBLISH_DIR" config user.name "github-actions[bot]"
           git -C "$PUBLISH_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$PUBLISH_DIR" add "$FILE_NAME"
-          git -C "$PUBLISH_DIR" commit -m "Publish Kali Linux 1.4.17 ARM64 APK"
+          git -C "$PUBLISH_DIR" commit -m "Publish Kali Linux 1.4.19 ARM64 APK"
           git -C "$PUBLISH_DIR" remote add origin \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git -C "$PUBLISH_DIR" push --force origin HEAD:refs/heads/apk-downloads
