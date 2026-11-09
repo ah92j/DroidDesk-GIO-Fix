@@ -862,7 +862,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v4")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v5")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -902,7 +902,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v4").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v5").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -956,6 +956,8 @@ class LinuxRuntime(private val context: Context) {
             set +e
             export DISPLAY=:0 HOME=/home/kali XDG_RUNTIME_DIR=/tmp/runtime-kali
             xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/image-path --set '/usr/share/xfce4/backdrops/Kali Linux'
+            xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/workspace0/last-image --set '/usr/share/xfce4/backdrops/Kali Linux/kali-cubes2-16x9.jpg'
+            xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/workspace0/image-style --set 5
             xfconf-query -c xfce4-desktop -p /desktop-icons/file-icons/show-trash --set true
             xfconf-query -c xfwm4 -p /general/use_compositing --set true
             xfconf-query -c xfce4-panel -p /panels/panel-2/background-style --set 1
