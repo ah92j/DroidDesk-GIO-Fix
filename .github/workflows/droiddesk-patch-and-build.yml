@@ -215,7 +215,7 @@ jobs:
           escaped_shell_name_kill = 'pkill -KILL -x "' + shell_name_token + '"'
           if escaped_shell_name not in runtime or escaped_shell_name_kill not in runtime:
               missing.append('Kotlin-safe escaping for shell variables in XFCE cleanup commands')
-          if 'pkill -TERM -u kali -x "$name"' in runtime or 'pkill -KILL -u kali -x "$name"' in runtime:
+          if 'pkill -TERM -x "$name"' in runtime or 'pkill -KILL -x "$name"' in runtime:
               missing.append('no unescaped shell variables inside Kotlin raw strings')
           if 'fun snapshot()' not in kali_coordinator or 'private var running = false' not in kali_coordinator:
               missing.append('Kali install process state')
