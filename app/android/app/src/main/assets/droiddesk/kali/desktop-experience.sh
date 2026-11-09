@@ -7,13 +7,13 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v7"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v8"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
   kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
-  ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
+  ffmpeg libavcodec-extra62 libavcodec-extra63 gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg file
 )
 
@@ -22,7 +22,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v7" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v8" ]]
+  grep -q "libavcodec-extra62" "$0"
+  grep -q "libavcodec-extra63" "$0"
+  grep -q "Preserve existing XFCE preferences" "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -163,6 +166,7 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 export PULSE_SINK=droiddesk_android
 export PULSE_LATENCY_MSEC=80
 export MOZ_DISABLE_CONTENT_SANDBOX=1
+export MOZ_DISABLE_RDD_SANDBOX=1
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
 firefox_bin="$(command -v firefox-esr || command -v firefox || true)"
@@ -258,6 +262,8 @@ diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
   echo "=== Firefox ==="
   firefox-esr --version 2>&1 || firefox --version 2>&1 || true
   dpkg-query -W firefox-esr ffmpeg 2>/dev/null || true
+  echo "=== Firefox and codec package candidates ==="
+  apt-cache policy firefox-esr libavcodec-extra62 libavcodec-extra63 2>/dev/null || true
   echo "=== FFmpeg libraries ==="
   dpkg-query -W 'libavcodec*' 2>/dev/null || true
   ldconfig -p 2>/dev/null | grep 'libavcodec.so' || true
@@ -307,39 +313,36 @@ if [[ -z "$default_wallpaper" || ! -f "$default_wallpaper" ]]; then
 fi
 
 desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+# Preserve existing XFCE preferences. Only add gallery/default keys when absent;
+# never replace a user's selected wallpaper, panel style, compositing choice or icon layout.
+desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 if [[ -f "$desktop_xml" ]]; then
-  if grep -q 'name="image-path"' "$desktop_xml"; then
-    sed -i -E '/name="image-path"/ s#value="[^"]*"#value="/usr/share/xfce4/backdrops/Kali Linux"#' "$desktop_xml"
-  else
+  if ! grep -q 'name="image-path"' "$desktop_xml"; then
     sed -i '\#<property name="monitorbuiltin" type="empty">#a\                <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>' "$desktop_xml"
   fi
-  if grep -q 'name="last-image"' "$desktop_xml"; then
-    sed -i "0,/name=\"last-image\"/s#value=\"[^\"]*\"#value=\"$default_wallpaper\"#" "$desktop_xml"
-  else
+  if ! grep -q 'name="last-image"' "$desktop_xml"; then
     sed -i "/name=\"image-style\"/a\                  <property name=\"last-image\" type=\"string\" value=\"$default_wallpaper\"/>" "$desktop_xml"
   fi
-  if grep -q 'name="show-trash"' "$desktop_xml"; then
-    sed -i -E 's#(<property name="show-trash" type="bool" value=")false("/>)#\1true\2#' "$desktop_xml"
-  else
+  if ! grep -q 'name="show-trash"' "$desktop_xml"; then
     sed -i '/<property name="show-filesystem"/a\              <property name="show-trash" type="bool" value="true"/>' "$desktop_xml"
   fi
 fi
 
-# Style 1 uses the explicitly transparent RGBA color below; XFWM compositing stays enabled.
+# Add a transparent dock default only on first setup; don't overwrite user panel choices.
 panel_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
-if [[ -f "$panel_xml" ]]; then
-  sed -i '/<property name="panel-2" type="empty">/,/<property name="plugin-ids"/ s#<property name="background-style" type="uint" value="[0-9]*"/>#<property name="background-style" type="uint" value="1"/>#' "$panel_xml"
+if [[ -f "$panel_xml" ]] &&
+   ! grep -q 'name="background-style"' "$panel_xml"; then
+  sed -i '/<property name="panel-2" type="empty">/a\              <property name="background-style" type="uint" value="1"/>' "$panel_xml"
 fi
 
-# Keep XFCE compositing enabled so the transparent bottom panel does not render black.
+# Add compositing only if XFCE has no saved choice yet.
 xfwm_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
-if [[ -f "$xfwm_xml" ]]; then
-  if grep -q 'name="use_compositing"' "$xfwm_xml"; then
-    sed -i -E 's#(<property name="use_compositing" type="bool" value=")false("/>)#\1true\2#' "$xfwm_xml"
-  else
-    sed -i '/<property name="general" type="empty">/a\            <property name="use_compositing" type="bool" value="true"/>' "$xfwm_xml"
-  fi
+if [[ -f "$xfwm_xml" ]] &&
+   ! grep -q 'name="use_compositing"' "$xfwm_xml"; then
+  sed -i '/<property name="general" type="empty">/a\            <property name="use_compositing" type="bool" value="true"/>' "$xfwm_xml"
 fi
+
+# XFCE stores desktop icon coordinates in icons.screen*.rc; this migration never writes those files.
 
 # Keep only XFCE's native Trash desktop icon; remove the duplicate custom shortcut.
 rm -f /home/kali/Desktop/Trash.desktop
