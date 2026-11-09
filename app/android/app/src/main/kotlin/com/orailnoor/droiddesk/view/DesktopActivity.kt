@@ -771,6 +771,26 @@ class DesktopActivity : Activity() {
     private fun revealDesktop(ready: Boolean) {
         runOnUiThread {
             if (desktopRevealed || isFinishing || isDestroyed) return@runOnUiThread
+            if (!ready && sessionMode == "proot-kali") {
+                // Never expose a half-started XFCE session as if it were usable.
+                // LinuxRuntime has already cleaned up the failed Kali session so
+                // a fresh entry can start without reusing its dead DBus/XFCE tree.
+                loadingMessageHandler.removeCallbacks(loadingMessageTicker)
+                loadingMessageHandler.removeCallbacks(loadingEstimateTicker)
+                logoAnimator?.stop()
+                loadingOverlay?.apply {
+                    alpha = 1f
+                    visibility = View.VISIBLE
+                    bringToFront()
+                }
+                loadingStatus?.text = "Kali desktop could not start"
+                loadingEstimate?.text = "XFCE did not become ready. Close this screen and open Kali Desktop again."
+                collapsedControl?.visibility = View.INVISIBLE
+                controlOverlay?.visibility = View.INVISIBLE
+                Log.e(TAG, "Kali desktop startup failed readiness checks; keeping recovery screen visible")
+                Toast.makeText(this@DesktopActivity, "Kali XFCE failed to start. Reopen Kali Desktop to retry.", Toast.LENGTH_LONG).show()
+                return@runOnUiThread
+            }
             desktopRevealed = true
             loadingMessageHandler.removeCallbacks(loadingMessageTicker)
             loadingMessageHandler.removeCallbacks(loadingEstimateTicker)
