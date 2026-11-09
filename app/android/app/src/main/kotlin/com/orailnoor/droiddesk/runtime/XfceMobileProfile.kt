@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v18"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v19"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -52,6 +52,7 @@ object XfceMobileProfile {
             installMonospaceFontRule(homeDir)
             installPanelCss(homeDir)
             installAutoMaximize(homeDir)
+            installFileManagerDefaults(homeDir)
 
             val panelDir = File(homeDir, ".config/xfce4/panel")
             writeLauncher(
@@ -65,7 +66,7 @@ object XfceMobileProfile {
                 File(panelDir, "launcher-22/droiddesk-files.desktop"),
                 name = "Files",
                 comment = "Browse files",
-                exec = "thunar %u",
+                exec = "/usr/bin/thunar %u",
                 icon = "org.xfce.filemanager",
             )
             writeLauncher(
@@ -102,10 +103,36 @@ object XfceMobileProfile {
             Comment=$comment
             Exec=$exec
             Icon=$icon
+            TryExec=${exec.substringBefore(' ')}
             StartupNotify=true
             Terminal=false
             """.trimIndent() + "\n",
         )
+    }
+
+    /**
+     * Set Thunar as XFCE's explicit directory handler for Home, File System,
+     * folder links and the DroidDesk dock launcher.
+     */
+    private fun installFileManagerDefaults(homeDir: File) {
+        val configDir = File(homeDir, ".config/xfce4").apply { mkdirs() }
+        File(configDir, "helpers.rc").writeText(
+            "FileManager=Thunar\n",
+        )
+
+        val mimeApps = File(homeDir, ".config/mimeapps.list")
+        mimeApps.parentFile?.mkdirs()
+        mimeApps.writeText(
+            """
+            [Default Applications]
+            inode/directory=thunar.desktop;
+            application/x-gnome-saved-search=thunar.desktop;
+
+            [Added Associations]
+            inode/directory=thunar.desktop;
+            """.trimIndent() + "\n",
+        )
+        Log.i(TAG, "Configured Thunar as the default XFCE file manager")
     }
 
     private fun installPanelCss(homeDir: File) {
