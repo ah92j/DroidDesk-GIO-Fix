@@ -134,7 +134,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v4',
+              'desktop-experience-v5',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -434,7 +434,7 @@ jobs:
               missing.append('Kali desktop readiness timeout estimate')
 
           if 'version: 1.4.22+39' not in pubspec:
-              missing.append('version: 1.4.21+38')
+              missing.append('expected release version 1.4.22+39')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
