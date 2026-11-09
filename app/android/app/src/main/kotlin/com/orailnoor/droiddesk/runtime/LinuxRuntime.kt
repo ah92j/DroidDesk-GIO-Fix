@@ -474,18 +474,18 @@ class LinuxRuntime(private val context: Context) {
             needs_update=0
 
             for package in glycin-loaders libglycin-2-0 glycin-thumbnailers; do
-              status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
-              version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
-              if [ "$status" != "install ok installed" ]; then
-                echo "[DroidDesk Kali] Required image-loader package is missing: $package"
+              status="${'$'}(dpkg-query -W -f='${'$'}{Status}' "${'$'}package" 2>/dev/null || true)"
+              version="${'$'}(dpkg-query -W -f='${'$'}{Version}' "${'$'}package" 2>/dev/null || true)"
+              if [ "${'$'}status" != "install ok installed" ]; then
+                echo "[DroidDesk Kali] Required image-loader package is missing: ${'$'}package"
                 needs_update=1
-              elif ! dpkg --compare-versions "$version" ge "$minimum_version"; then
-                echo "[DroidDesk Kali] $package $version is older than $minimum_version"
+              elif ! dpkg --compare-versions "${'$'}version" ge "${'$'}minimum_version"; then
+                echo "[DroidDesk Kali] ${'$'}package ${'$'}version is older than ${'$'}minimum_version"
                 needs_update=1
               fi
             done
 
-            if [ "$needs_update" -eq 1 ]; then
+            if [ "${'$'}needs_update" -eq 1 ]; then
               echo "[DroidDesk Kali] Updating Kali Glycin packages for Android PRoot compatibility..."
               apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
                 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
@@ -497,12 +497,12 @@ class LinuxRuntime(private val context: Context) {
             fi
 
             for package in glycin-loaders libglycin-2-0 glycin-thumbnailers; do
-              version="$(dpkg-query -W -f='${Version}' "$package")"
-              if ! dpkg --compare-versions "$version" ge "$minimum_version"; then
-                echo "[DroidDesk Kali] $package remains at $version; need $minimum_version or newer."
+              version="${'$'}(dpkg-query -W -f='${'$'}{Version}' "${'$'}package")"
+              if ! dpkg --compare-versions "${'$'}version" ge "${'$'}minimum_version"; then
+                echo "[DroidDesk Kali] ${'$'}package remains at ${'$'}version; need ${'$'}minimum_version or newer."
                 exit 31
               fi
-              echo "[DroidDesk Kali] $package version: $version"
+              echo "[DroidDesk Kali] ${'$'}package version: ${'$'}version"
             done
 
             dpkg --configure -a
@@ -521,50 +521,50 @@ class LinuxRuntime(private val context: Context) {
             fi
 
             svg='/usr/share/icons/Adwaita/scalable/status/image-missing.svg'
-            if [ ! -s "$svg" ]; then
-              svg="$(find /usr/share/icons -type f -name '*.svg' -print -quit 2>/dev/null || true)"
+            if [ ! -s "${'$'}svg" ]; then
+              svg="${'$'}(find /usr/share/icons -type f -name '*.svg' -print -quit 2>/dev/null || true)"
             fi
-            [ -n "$svg" ] && [ -s "$svg" ] || {
+            [ -n "${'$'}svg" ] && [ -s "${'$'}svg" ] || {
               echo "[DroidDesk Kali] No installed SVG icon is available for the image-loader test."
               exit 33
             }
 
             probe_dir='/tmp/droiddesk-glycin-probe'
-            rm -rf "$probe_dir"
-            install -d -m 0700 "$probe_dir" "$probe_dir/cache" "$probe_dir/runtime"
-            chmod 0700 "$probe_dir/runtime"
-            trap 'rm -rf "$probe_dir"' EXIT
+            rm -rf "${'$'}probe_dir"
+            install -d -m 0700 "${'$'}probe_dir" "${'$'}probe_dir/cache" "${'$'}probe_dir/runtime"
+            chmod 0700 "${'$'}probe_dir/runtime"
+            trap 'rm -rf "${'$'}probe_dir"' EXIT
 
             # GdkPixbuf 2.44 on ARM64 uses Glycin. Its legacy
             # gdk-pixbuf-thumbnailer command is intentionally not shipped here.
             # csource remains available and calls GdkPixbuf's real image loader.
             printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==' \
-              | base64 -d > "$probe_dir/probe.png"
-            test -s "$probe_dir/probe.png" || {
+              | base64 -d > "${'$'}probe_dir/probe.png"
+            test -s "${'$'}probe_dir/probe.png" || {
               echo "[DroidDesk Kali] Could not create the PNG decoder test image."
               exit 34
             }
 
             export GLYCIN_DISABLE_SANDBOX=i-know-the-risks
             export HOME=/root
-            export XDG_CACHE_HOME="$probe_dir/cache"
-            export XDG_RUNTIME_DIR="$probe_dir/runtime"
+            export XDG_CACHE_HOME="${'$'}probe_dir/cache"
+            export XDG_RUNTIME_DIR="${'$'}probe_dir/runtime"
             export XDG_DATA_HOME=/root/.local/share
             export XDG_CONFIG_HOME=/root/.config
             export XDG_DATA_DIRS=/usr/local/share:/usr/share
 
             echo "[DroidDesk Kali] Testing the actual GdkPixbuf PNG loader without nested Bubblewrap..."
             gdk-pixbuf-csource --raw --name=droiddesk_png_probe \
-              "$probe_dir/probe.png" > "$probe_dir/png.c"
-            test -s "$probe_dir/png.c" || {
+              "${'$'}probe_dir/probe.png" > "${'$'}probe_dir/png.c"
+            test -s "${'$'}probe_dir/png.c" || {
               echo "[DroidDesk Kali] GdkPixbuf PNG decoding failed with Glycin sandbox disabled."
               exit 35
             }
 
             echo "[DroidDesk Kali] Testing the actual GdkPixbuf SVG loader without nested Bubblewrap..."
             gdk-pixbuf-csource --raw --name=droiddesk_svg_probe \
-              "$svg" > "$probe_dir/svg.c"
-            test -s "$probe_dir/svg.c" || {
+              "${'$'}svg" > "${'$'}probe_dir/svg.c"
+            test -s "${'$'}probe_dir/svg.c" || {
               echo "[DroidDesk Kali] GdkPixbuf SVG decoding failed with Glycin sandbox disabled."
               exit 36
             }
