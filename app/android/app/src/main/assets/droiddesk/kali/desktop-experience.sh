@@ -12,13 +12,15 @@ readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
-  kali-wallpapers-2026 gvfs gvfs-backends pulseaudio-utils libasound2-plugins
+  kali-wallpapers-2026 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
   ffmpeg libavcodec-extra gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg
 )
 
 if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$WALLPAPER_DIR" == "/usr/share/xfce4/backdrops/Kali Linux" ]]
+  grep -q 'gvfs-daemons' "$0"
+  grep -q 'kali-cubes2-16x9.jpg' "$0"
   [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v4" ]]
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
@@ -218,8 +220,11 @@ if [[ -f "$desktop_xml" ]]; then
     *) current_wallpaper="" ;;
   esac
   if [[ -z "$current_wallpaper" ]]; then
-    first_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l -iname '*2026*' -print -quit || true)"
-    [[ -n "$first_wallpaper" ]] || first_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l -print | sort | head -n 1 || true)"
+    first_wallpaper="$WALLPAPER_DIR/kali-cubes2-16x9.jpg"
+    if [[ ! -e "$first_wallpaper" ]]; then
+      first_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l -iname '*cubes2*' -print -quit || true)"
+    fi
+    [[ -n "$first_wallpaper" && -e "$first_wallpaper" ]] || first_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l -print | sort | head -n 1 || true)"
     if [[ -n "$first_wallpaper" ]]; then
       sed -i "0,/name=\"last-image\"/s#value=\"[^\"]*\"#value=\"$first_wallpaper\"#" "$desktop_xml"
     fi
