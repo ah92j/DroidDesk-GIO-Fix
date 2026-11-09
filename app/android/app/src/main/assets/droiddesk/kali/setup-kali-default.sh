@@ -42,6 +42,7 @@ APT_PACKAGES=(
   xclip
   x11-utils
   fonts-noto-core
+  adwaita-icon-theme
 )
 
 # CI-only validation mode. This does not modify /etc, /var, dpkg, or the network.
