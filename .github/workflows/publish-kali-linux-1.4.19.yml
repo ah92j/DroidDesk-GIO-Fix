@@ -1,11 +1,13 @@
 name: Publish Kali Linux 1.4.19 Direct APK
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - DroidDesk Permanent Release Build
+    types:
+      - completed
     branches:
       - security/hardening-phase-1
-    paths:
-      - '.github/workflows/publish-kali-linux-1.4.19.yml'
 
 permissions:
   actions: read
@@ -13,28 +15,19 @@ permissions:
 
 jobs:
   publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Find the latest successful ARM64 release build
+      - name: Download the artifact from the successful source build
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
-          BUILD_RUN_ID="$(gh run list \
-            --repo ah92j/DroidDesk-GIO-Fix \
-            --workflow droiddesk-patch-and-build.yml \
-            --branch security/hardening-phase-1 \
-            --status success \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')"
-          test -n "$BUILD_RUN_ID"
-          echo "Using successful source build: $BUILD_RUN_ID"
-
           DOWNLOAD_DIR="$RUNNER_TEMP/kali-linux-apk"
           mkdir -p "$DOWNLOAD_DIR"
-          gh run download "$BUILD_RUN_ID" \
+          gh run download "$SOURCE_RUN_ID" \
             --repo ah92j/DroidDesk-GIO-Fix \
             --name Kali-Linux-1.4.19-arm64 \
             --dir "$DOWNLOAD_DIR"

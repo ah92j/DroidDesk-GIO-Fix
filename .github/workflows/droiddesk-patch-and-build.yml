@@ -136,7 +136,7 @@ jobs:
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
               'PULSE_SINK=droiddesk_android',
               'PULSE_LATENCY_MSEC=80',
-              'MOZ_FAKE_NO_SANDBOX=1',
+              'MOZ_DISABLE_CONTENT_SANDBOX=1',
               'ensureKaliDesktopExperience(rootfs)',
               'gdk-pixbuf-csource --raw --name=droiddesk_png_probe',
               'gdk-pixbuf-csource --raw --name=droiddesk_svg_probe',
@@ -265,6 +265,10 @@ jobs:
           missing = [item for item in required_runtime if item not in runtime]
           missing.extend(item for item in required_audio_output if item not in audio_output)
           missing.extend(item for item in required_profile if item not in profile)
+          if 'WebBrowser=google-chrome.desktop' in profile:
+              missing.append('do not hardcode Chrome as default in the XFCE profile')
+          if 'preservedBrowser' not in profile:
+              missing.append('preserve the selected browser in XFCE helpers.rc')
           missing.extend(item for item in required_root_shell if item not in root_shell)
           missing.extend(item for item in required_rootfs_size if item not in rootfs_manager)
           missing.extend(item for item in required_chroot if item not in chroot)

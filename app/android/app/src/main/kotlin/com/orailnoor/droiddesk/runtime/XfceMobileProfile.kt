@@ -116,8 +116,15 @@ object XfceMobileProfile {
      */
     private fun installFileManagerDefaults(homeDir: File) {
         val configDir = File(homeDir, ".config/xfce4").apply { mkdirs() }
-        File(configDir, "helpers.rc").writeText(
-            "FileManager=Thunar\nWebBrowser=google-chrome.desktop\n",
+        val helpersFile = File(configDir, "helpers.rc")
+        val existingHelpers = if (helpersFile.isFile) helpersFile.readText() else ""
+        val preservedBrowser = existingHelpers.lineSequence()
+            .firstOrNull { it.startsWith("WebBrowser=") }
+        helpersFile.writeText(
+            buildList {
+                add("FileManager=Thunar")
+                if (preservedBrowser != null) add(preservedBrowser)
+            }.joinToString("\n", postfix = "\n"),
         )
 
         val mimeApps = File(homeDir, ".config/mimeapps.list")

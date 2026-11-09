@@ -108,7 +108,7 @@ while IFS= read -r -d '' image_file; do
   image_name="$(basename "$image_file")"
   ln -sfn "$image_file" "$WALLPAPER_DIR/$image_name"
 done < <(
-  find /usr/share -type f \
+  find /usr/share \( -type f -o -type l \) \
     \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.svg' \) \
     \( -ipath '*/backgrounds/*' -o -ipath '*/wallpapers/*' \) -print0
 )
@@ -117,7 +117,9 @@ echo "[Kali Linux] Official wallpaper choices exposed to XFCE: $wallpaper_count"
 
 desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 if [[ -f "$desktop_xml" ]]; then
-  if ! grep -q 'name="image-path"' "$desktop_xml"; then
+  if grep -q 'name="image-path"' "$desktop_xml"; then
+    sed -i -E '/name="image-path"/ s#value="[^"]*"#value="/usr/share/xfce4/backdrops/Kali Linux"#' "$desktop_xml"
+  else
     sed -i '\#<property name="monitorbuiltin" type="empty">#a\                <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>' "$desktop_xml"
   fi
   if grep -q 'name="show-trash"' "$desktop_xml"; then

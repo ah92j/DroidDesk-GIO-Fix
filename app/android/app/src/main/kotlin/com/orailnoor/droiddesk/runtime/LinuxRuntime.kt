@@ -447,7 +447,7 @@ class LinuxRuntime(private val context: Context) {
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
               SHELL=/usr/bin/zsh TERM=xterm-256color LANG=C.UTF-8 DISPLAY=:0 GDK_BACKEND=x11 \
               PULSE_SERVER=tcp:127.0.0.1:4713 PULSE_SINK=droiddesk_android PULSE_LATENCY_MSEC=80 \
-              MOZ_FAKE_NO_SANDBOX=1 XDG_RUNTIME_DIR=/tmp/runtime-kali \
+              MOZ_DISABLE_CONTENT_SANDBOX=1 XDG_RUNTIME_DIR=/tmp/runtime-kali \
               /usr/bin/sudo -E -u kali /bin/bash --login
             """.trimIndent() + "\n",
         )
@@ -1014,7 +1014,7 @@ class LinuxRuntime(private val context: Context) {
             "export HOME=/home/kali USER=kali LOGNAME=kali",
             "export DISPLAY=:0 LANG=C.UTF-8 TERM=xterm-256color",
             "export PULSE_SERVER=tcp:127.0.0.1:4713 PULSE_SINK=droiddesk_android PULSE_LATENCY_MSEC=80",
-            "export MOZ_FAKE_NO_SANDBOX=1 MOZ_ENABLE_WAYLAND=0",
+            "export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_ENABLE_WAYLAND=0",
             "export XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "export XDG_CONFIG_HOME=/home/kali/.config XDG_CACHE_HOME=/home/kali/.cache",
             "export XDG_DATA_HOME=/home/kali/.local/share XDG_DATA_DIRS=/usr/local/share:/usr/share",
@@ -1051,7 +1051,7 @@ class LinuxRuntime(private val context: Context) {
             "SHELL=/usr/bin/zsh", "TERM=xterm-256color", "LANG=C.UTF-8",
             "DISPLAY=:0", "PULSE_SERVER=tcp:127.0.0.1:4713",
             "PULSE_SINK=droiddesk_android", "PULSE_LATENCY_MSEC=80",
-            "MOZ_FAKE_NO_SANDBOX=1", "MOZ_ENABLE_WAYLAND=0",
+            "MOZ_DISABLE_CONTENT_SANDBOX=1", "MOZ_ENABLE_WAYLAND=0",
             "XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "XDG_CURRENT_DESKTOP=XFCE", "XDG_SESSION_DESKTOP=xfce", "XDG_SESSION_TYPE=x11",
             "NO_AT_BRIDGE=1", "GTK_A11Y=none", "BASH_ENV=/dev/null",
