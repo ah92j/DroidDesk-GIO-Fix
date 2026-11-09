@@ -90,23 +90,22 @@ class MainActivity : FlutterActivity() {
         maybeAutoStartDesktop(intent)
     }
 
-    /** Optional "Auto-Start Linux Desktop" setting: open the chroot desktop whenever the app starts. */
+    /** Launch Linux automatically only when the user has explicitly enabled the setting. */
     private fun maybeAutoStartDesktop(launchIntent: Intent) {
-        val isHomeLaunch = launchIntent.action == Intent.ACTION_MAIN && launchIntent.hasCategory(Intent.CATEGORY_HOME)
+        val isHomeLaunch = launchIntent.action == Intent.ACTION_MAIN &&
+            launchIntent.hasCategory(Intent.CATEGORY_HOME)
         if (isHomeLaunch || launchIntent.action == ACTION_OPEN_DESKTOP) return
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("flutter.autoStartDesktop", false)) return
+
         thread(name = "auto-start-desktop-check") {
-            val ready = chrootRuntime.hasRoot() && chrootRuntime.isRootfsReady()
-            if (ready) {
-                val running = chrootRuntime.isRunning()
-                runOnUiThread {
-                    startForegroundService()
-                    startActivity(Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                        putExtra("startSession", !running); putExtra("mode", "chroot"); putExtra("de", "xfce4")
-                    })
+            runCatching { resolveDesktopLaunchConfig() }
+                .onSuccess { config ->
+                    runOnUiThread { launchDesktopScreen(config, startSession = !config.isRunning) }
                 }
-            }
+                .onFailure { error ->
+                    Log.w(TAG, "Auto-start skipped; Linux desktop is not ready: ${error.message}")
+                }
         }
     }
 
@@ -159,10 +158,21 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleHomeLaunch(homeIntent: Intent) {
-        val isHomeLaunch = homeIntent.action == Intent.ACTION_MAIN && homeIntent.hasCategory(Intent.CATEGORY_HOME)
+        val isHomeLaunch = homeIntent.action == Intent.ACTION_MAIN &&
+            homeIntent.hasCategory(Intent.CATEGORY_HOME)
         if (!isHomeLaunch && homeIntent.action != ACTION_OPEN_DESKTOP) return
-        if (homeIntent.action == ACTION_OPEN_DESKTOP && com.orailnoor.droiddesk.view.DesktopActivity.isOpen()) {
-            // Reuse the existing desktop screen; a second one would fight over the shared LorieView.
+
+        // A HOME intent must show the responsive DroidDesk dashboard by default.
+        // Starting XFCE here without the explicit auto-start preference caused a
+        // blank desktop loading screen before the user could reach the app controls.
+        if (isHomeLaunch) {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("flutter.autoStartDesktop", false)) return
+        }
+
+        if (homeIntent.action == ACTION_OPEN_DESKTOP &&
+            com.orailnoor.droiddesk.view.DesktopActivity.isOpen()
+        ) {
             startActivity(
                 Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
@@ -172,34 +182,15 @@ class MainActivity : FlutterActivity() {
         }
 
         thread(name = "home-launch") {
-            val rooted = chrootRuntime.hasRoot()
-            val kaliProot = !rooted && chrootRuntime.getInstalledDistro() == "kali" &&
-                chrootRuntime.isRootfsReady() &&
-                linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))
-            val desktopEnv = if (rooted || kaliProot) "xfce4" else linuxRuntime.getInstalledDE()
-            val ready = when {
-                rooted -> chrootRuntime.isRootfsReady() && chrootRuntime.isDesktopInstalled()
-                kaliProot -> true
-                else -> linuxRuntime.isBootstrapped() && desktopEnv.isNotEmpty()
-            }
-            if (!ready) {
-                Log.i(TAG, "Home launch opened setup because Linux is not ready")
-                return@thread
-            }
-
-            startForegroundService()
-            val sessionRunning = if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning()
-            runOnUiThread {
-                startActivity(Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                    putExtra("startSession", !sessionRunning)
-                    putExtra("mode", when {
-                        rooted -> "chroot"
-                        kaliProot -> "proot-kali"
-                        else -> "termux"
-                    })
-                    putExtra("de", desktopEnv)
-                })
-            }
+            runCatching { resolveDesktopLaunchConfig() }
+                .onSuccess { config ->
+                    runOnUiThread {
+                        launchDesktopScreen(config, startSession = !config.isRunning)
+                    }
+                }
+                .onFailure { error ->
+                    Log.i(TAG, "Home desktop auto-start skipped: ${error.message}")
+                }
         }
     }
 
@@ -879,39 +870,50 @@ class MainActivity : FlutterActivity() {
                 }
                 "launchDesktopActivity" -> {
                     thread(name = "return-to-desktop") {
-                        try {
-                            val rooted = chrootRuntime.hasRoot()
-                            val installedDistro = chrootRuntime.getInstalledDistro()
-                            val rootfsReady = if (rooted || installedDistro == "kali") chrootRuntime.isRootfsReady() else false
-                            val kaliProot = !rooted && installedDistro == "kali" && rootfsReady &&
-                                linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))
-                            val running = if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning()
-                            val mode = when { rooted -> "chroot"; kaliProot -> "proot-kali"; else -> "termux" }
-                            val desktop = if (rooted || kaliProot) "xfce4" else linuxRuntime.getInstalledDE()
-                            runOnUiThread {
-                                if (!running) startForegroundService()
-                                startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                    putExtra("startSession", !running); putExtra("mode", mode); putExtra("de", desktop)
-                                })
-                                result.success(true)
+                        runCatching { resolveDesktopLaunchConfig() }
+                            .onSuccess { config ->
+                                runOnUiThread {
+                                    launchDesktopScreen(config, startSession = !config.isRunning)
+                                    result.success(true)
+                                }
                             }
-                        } catch (error: Throwable) {
-                            Log.e(TAG, "Return to desktop failed", error)
-                            runOnUiThread { result.error("launch_desktop", error.message, null) }
-                        }
+                            .onFailure { error ->
+                                Log.e(TAG, "Return to desktop failed", error)
+                                runOnUiThread {
+                                    result.error("launch_desktop", error.message, null)
+                                }
+                            }
                     }
                 }
                 "stopLinux" -> {
                     // A desktop screen left in the back stack would reopen onto a dead session.
                     com.orailnoor.droiddesk.view.DesktopActivity.finishIfOpen()
                     thread(name = "stop-linux-session") {
-                        if (chrootRuntime.hasRoot() || chrootRuntime.isRunning()) {
-                            chrootRuntime.stopSession()
+                        var failure: Throwable? = null
+                        try {
+                            if (chrootRuntime.hasRoot() || chrootRuntime.isRunning()) {
+                                chrootRuntime.stopSession()
+                            }
+                        } catch (error: Throwable) {
+                            failure = error
+                            Log.e(TAG, "Chroot shutdown failed", error)
                         }
-                        linuxRuntime.stopSession()
-                        stopService(Intent(this@MainActivity, X11ServerService::class.java))
-                        stopForegroundService()
-                        runOnUiThread { result.success(true) }
+                        try {
+                            linuxRuntime.stopSession()
+                        } catch (error: Throwable) {
+                            if (failure == null) failure = error
+                            Log.e(TAG, "Linux shutdown failed", error)
+                        } finally {
+                            runCatching { stopService(Intent(this@MainActivity, X11ServerService::class.java)) }
+                            runCatching { stopForegroundService() }
+                            runOnUiThread {
+                                if (failure == null) {
+                                    result.success(true)
+                                } else {
+                                    result.error("stop_linux", failure?.message ?: "Linux shutdown failed", null)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1048,14 +1050,52 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun openDesktop(startSession: Boolean) {
+    private data class DesktopLaunchConfig(
+        val mode: String,
+        val desktopEnv: String,
+        val isRunning: Boolean,
+    )
+
+    /** Resolve the distribution and its matching runtime; never fall through from Kali PRoot to Termux. */
+    private fun resolveDesktopLaunchConfig(): DesktopLaunchConfig {
         val rooted = chrootRuntime.hasRoot()
+        if (rooted) {
+            check(chrootRuntime.isRootfsReady() && chrootRuntime.isDesktopInstalled()) {
+                "The chroot Linux desktop is not installed or its root filesystem is incomplete"
+            }
+            return DesktopLaunchConfig("chroot", "xfce4", chrootRuntime.isRunning())
+        }
+
+        val installedDistro = chrootRuntime.getInstalledDistro()
+        if (installedDistro == "kali") {
+            val rootfs = File(filesDir, "rootfs")
+            check(chrootRuntime.isRootfsReady()) { "The Kali root filesystem is not ready" }
+            check(linuxRuntime.isKaliProotDesktopInstalled(rootfs)) {
+                "Kali XFCE is not fully installed inside DroidDesk"
+            }
+            return DesktopLaunchConfig("proot-kali", "xfce4", linuxRuntime.isRunning())
+        }
+
+        val desktopEnv = linuxRuntime.getInstalledDE()
+        check(linuxRuntime.isBootstrapped() && desktopEnv.isNotBlank()) {
+            "The native Linux desktop is not installed or not ready"
+        }
+        return DesktopLaunchConfig("termux", desktopEnv, linuxRuntime.isRunning())
+    }
+
+    /** Must be called on the UI thread after [resolveDesktopLaunchConfig] completed on a worker. */
+    private fun launchDesktopScreen(config: DesktopLaunchConfig, startSession: Boolean) {
         startForegroundService()
         startActivity(Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
             putExtra("startSession", startSession)
-            putExtra("mode", if (rooted) "chroot" else "termux")
-            putExtra("de", if (rooted) "xfce4" else linuxRuntime.getInstalledDE())
+            putExtra("mode", config.mode)
+            putExtra("de", config.desktopEnv)
         })
+    }
+
+    private fun openDesktop(startSession: Boolean) {
+        val config = resolveDesktopLaunchConfig()
+        launchDesktopScreen(config, startSession)
     }
 
     private fun runPackageOperation(
