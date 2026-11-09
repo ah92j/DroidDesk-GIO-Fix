@@ -472,7 +472,8 @@ jobs:
               missing.append('install the direct browser helper')
           if 'GIO_USE_VFS=gvfs' not in runtime:
               missing.append('enable GVFS for Trash')
-          if '\npref("media.rdd-process.enabled", true);\nuser_pref("media.mediasource.enabled"' in desktop_experience_script:
+          user_prefs_block = desktop_experience_script.split("done <<'FIREFOX_USER_PREFS'", 1)[1].split("FIREFOX_USER_PREFS", 1)[0]
+          if '\npref(' in user_prefs_block:
               missing.append('remove invalid pref() call from Firefox user.js')
           if 'file' not in desktop_experience_script.split('REQUIRED_PACKAGES=(', 1)[1].split(')', 1)[0]:
               missing.append('install file utility for AppImage architecture detection')
