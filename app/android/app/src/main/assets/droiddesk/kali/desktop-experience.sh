@@ -7,13 +7,13 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v5"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v6"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
   kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
-  ffmpeg libavcodec-extra gstreamer1.0-libav gstreamer1.0-plugins-good
+  ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg
 )
 
@@ -22,7 +22,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v5" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v6" ]]
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -51,6 +51,15 @@ for package in "${REQUIRED_PACKAGES[@]}"; do
     exit 20
   fi
 done
+
+# Refresh Firefox ESR and install its currently recommended FFmpeg ABI.
+echo "[Kali Linux] Refreshing Firefox ESR and its matching FFmpeg codec recommendation..."
+apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=45 -o Dpkg::Use-Pty=0 update
+apt-get --install-recommends -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --reinstall firefox-esr
+if ! package_installed firefox-esr; then
+  echo "[Kali Linux] Firefox ESR is not configured after its upgrade."
+  exit 22
+fi
 
 # Install Google Chrome ARM64 from Google's signed repository first.
 if ! package_installed google-chrome-stable; then
@@ -192,10 +201,11 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
 pref("media.cubeb.sandbox", false);
 pref("media.cubeb.backend", "pulse");
 pref("media.ffmpeg.enabled", true);
-pref("media.ffvpx.enabled", false);
+pref("media.ffvpx.enabled", true);
 pref("media.av1.enabled", false);
 pref("media.ffmpeg.vaapi.enabled", false);
 pref("media.hardware-video-decoding.enabled", false);
+pref("media.rdd-process.enabled", true);
 pref("media.mediasource.enabled", true);
 pref("media.mediasource.webm.enabled", true);
 pref("media.mediasource.vp9.enabled", true);
@@ -218,10 +228,12 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
 user_pref("media.cubeb.sandbox", false);
 user_pref("media.cubeb.backend", "pulse");
 user_pref("media.ffmpeg.enabled", true);
-user_pref("media.ffvpx.enabled", false);
+user_pref("media.ffvpx.enabled", true);
 user_pref("media.av1.enabled", false);
 user_pref("media.ffmpeg.vaapi.enabled", false);
 user_pref("media.hardware-video-decoding.enabled", false);
+user_pref("media.rdd-process.enabled", true);
+pref("media.rdd-process.enabled", true);
 user_pref("media.mediasource.enabled", true);
 user_pref("media.mediasource.webm.enabled", true);
 user_pref("media.mediasource.vp9.enabled", true);
@@ -229,6 +241,24 @@ user_pref("media.mediasource.mp4.enabled", true);
 FIREFOX_USER_PREFS
   done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
 fi
+
+# Record the actual Firefox/FFmpeg package and codec state for future diagnosis.
+diagnostic_dir="/home/kali/.local/share/droiddesk"
+install -d -m 0755 "$diagnostic_dir"
+diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
+{
+  echo "=== Firefox ==="
+  firefox-esr --version 2>&1 || firefox --version 2>&1 || true
+  dpkg-query -W firefox-esr ffmpeg 2>/dev/null || true
+  echo "=== FFmpeg libraries ==="
+  dpkg-query -W 'libavcodec*' 2>/dev/null || true
+  ldconfig -p 2>/dev/null | grep 'libavcodec.so' || true
+  echo "=== Required software decoders ==="
+  ffmpeg -hide_banner -decoders 2>/dev/null | grep -E ' (aac|h264|vp8|vp9|opus) ' || true
+  echo "=== Firefox codec backend ==="
+  find /usr/lib/firefox-esr /usr/lib/firefox -maxdepth 2 -name 'libmozavcodec.so' -type f -print 2>/dev/null || true
+} > "$diagnostic_file"
+chmod 0644 "$diagnostic_file"
 
 # Build one flat XFCE gallery from every official Kali wallpaper package.
 WALLPAPER_PACKAGES=(
@@ -312,16 +342,77 @@ cat > /home/kali/.local/bin/droiddesk-install-download <<'INSTALLER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export HOME=/home/kali
+export DEBIAN_FRONTEND=noninteractive
 file="$1"
 [[ -f "$file" ]] || exit 1
 file="$(readlink -f "$file")"
 lower_file="$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')"
+log_dir="$HOME/.local/share/droiddesk"
+install -d -m 0755 "$log_dir"
+log_file="$log_dir/package-install.log"
+exec >> >(tee -a "$log_file") 2>&1
+
+show_failure() {
+  message="$1"
+  zenity --error --title='Installation failed' --width=480 --text="$message
+Full details were saved to:
+$log_file" 2>/dev/null || true
+  diagnostic_file="$(mktemp)"
+  tail -n 45 "$log_file" > "$diagnostic_file" 2>/dev/null || true
+  zenity --text-info --title='Installer diagnostics' --filename="$diagnostic_file" --width=760 --height=520 2>/dev/null || true
+  rm -f "$diagnostic_file"
+}
+
 case "$lower_file" in
   *.deb)
-    if sudo -n apt-get install -y "$file"; then
-      zenity --info --title='Kali Linux' --text='Installed. Find the application in the Applications menu.' 2>/dev/null || true
+    if ! command -v dpkg-deb >/dev/null 2>&1; then
+      show_failure "The Debian package tools are missing."
+      exit 2
+    fi
+    deb_arch="$(dpkg-deb -f "$file" Architecture 2>/dev/null || true)"
+    deb_name="$(dpkg-deb -f "$file" Package 2>/dev/null || true)"
+    host_arch="$(dpkg --print-architecture 2>/dev/null || true)"
+    if [[ -z "$deb_arch" || -z "$deb_name" ]]; then
+      show_failure "This file is not a valid Debian package."
+      exit 2
+    fi
+    if [[ "$deb_arch" != "all" && "$deb_arch" != "$host_arch" ]]; then
+      show_failure "Wrong package architecture.
+Package: $deb_arch
+Kali system: $host_arch
+Download the ARM64 build of this application."
+      exit 3
+    fi
+
+    echo "[DroidDesk Installer] Installing $deb_name ($deb_arch) from $file"
+    # Refresh package indexes, then let APT resolve the local package and
+    # all dependencies from the configured Kali repositories.
+    if ! sudo -n apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 update; then
+      echo "[DroidDesk Installer] APT update failed; attempting installation with cached indexes."
+    fi
+
+    install_ok=0
+    if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$file"; then
+      install_ok=1
     else
-      zenity --error --title='Installation failed' --text='Could not install this package. Check its architecture and dependencies.' 2>/dev/null || true
+      echo "[DroidDesk Installer] APT local-file install failed; trying dpkg followed by dependency repair."
+      sudo -n dpkg --configure -a || true
+      sudo -n dpkg -i "$file" || true
+      if sudo -n apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --fix-broken install -y; then
+        install_ok=1
+      fi
+    fi
+
+    package_status="$(dpkg-query -W -f='${Status}' "$deb_name" 2>/dev/null || true)"
+    if [[ "$install_ok" -eq 1 && "$package_status" == "install ok installed" ]]; then
+      sudo -n update-desktop-database /usr/share/applications 2>/dev/null || true
+      sudo -n update-mime-database /usr/share/mime 2>/dev/null || true
+      zenity --info --title='Kali Linux' --text="Installed $deb_name successfully. Find it in the Applications menu." 2>/dev/null || true
+    else
+      show_failure "Could not finish installing $deb_name.
+Architecture: $deb_arch
+System architecture: $host_arch
+APT could not resolve or configure all dependencies."
       exit 1
     fi
     ;;
@@ -331,14 +422,14 @@ case "$lower_file" in
     target="$HOME/Applications/$safe_file"
     cp -f "$file" "$target"
     chmod 0755 "$target"
-    app_name="${safe_file%.*}"
+    app_name="$(basename "$safe_file" .AppImage)"
     desktop="$HOME/.local/share/applications/$app_name.desktop"
     cat > "$desktop" <<ENTRY
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=$app_name
-Exec=$target
+Exec=env APPIMAGE_EXTRACT_AND_RUN=1 "$target"
 Icon=application-x-executable
 Terminal=false
 Categories=Utility;
