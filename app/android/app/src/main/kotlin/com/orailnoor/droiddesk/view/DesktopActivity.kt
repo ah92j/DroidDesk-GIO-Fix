@@ -73,6 +73,7 @@ class DesktopActivity : Activity() {
     private var loadingStatus: TextView? = null
     private var loadingEstimate: TextView? = null
     private var desktopRevealed = false
+    @Volatile private var kaliHealthCheckInProgress = false
     private val loadingMessageHandler = Handler(Looper.getMainLooper())
     private var loadingMessageIndex = 0
     private var loadingStartedAt = 0L
@@ -182,7 +183,32 @@ class DesktopActivity : Activity() {
      * in-app Stop). Coming back to it would only show the bare X server, so start Linux again.
      */
     private fun restartSessionIfStopped() {
-        if (!desktopRevealed || isSessionRunning()) return
+        if (!desktopRevealed || isFinishing || isDestroyed) return
+
+        if (sessionMode == "proot-kali") {
+            if (kaliHealthCheckInProgress) return
+            kaliHealthCheckInProgress = true
+            Thread({
+                val healthy = runCatching {
+                    linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))
+                }.getOrDefault(false)
+                runOnUiThread {
+                    kaliHealthCheckInProgress = false
+                    if (!healthy && desktopRevealed && !isFinishing && !isDestroyed) {
+                        Log.w(TAG, "Kali XFCE health check failed after returning to the desktop; restarting the session")
+                        restartDesktopSession()
+                    }
+                }
+            }, "KaliDesktopHealthCheck").apply { isDaemon = true; start() }
+            return
+        }
+
+        if (isSessionRunning()) return
+        restartDesktopSession()
+    }
+
+    private fun restartDesktopSession() {
+        if (!desktopRevealed || isFinishing || isDestroyed) return
         Log.i(TAG, "Desktop session is no longer running; starting it again")
         desktopRevealed = false
         controlOverlay?.visibility = View.INVISIBLE
