@@ -111,6 +111,9 @@ jobs:
           ).read_text()
 
           required_runtime = [
+              'fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 50): Boolean',
+              'wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg"',
+              '"/usr/bin/sudo", "-E", "-u", "kali", "/bin/bash", "-c", sessionScript',
               'env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"',
               'env["PULSE_RUNTIME_PATH"] = File(tmpDir, "pulse").absolutePath',
               'private fun getPulseAudioSinkNames(): List<String>?',
@@ -137,7 +140,8 @@ jobs:
           ]
 
           required_profile = [
-              '.droiddesk-xfce-mobile-v16',
+              '.droiddesk-xfce-mobile-v17',
+              '<property name="IconThemeName" type="string" value="Adwaita"/>',
               'File(homeDir, "Desktop").mkdirs()',
               '<property name="style" type="int" value="2"/>',
           ]
@@ -297,9 +301,13 @@ jobs:
               missing.append('all three Kali install/check commands use non-login bash -c')
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
+          if 'waitForKaliDesktopReady(File(filesDir, "rootfs"))' not in activity:
+              missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs')
+          if 'sessionMode == "proot-kali" -> 55' not in activity:
+              missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.8+23' not in pubspec:
-              missing.append('version: 1.4.8+23')
+          if 'version: 1.4.9+24' not in pubspec:
+              missing.append('version: 1.4.9+24')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -492,7 +500,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.8-arm64
+          name: DroidDesk-1.4.9-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
