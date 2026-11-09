@@ -474,11 +474,15 @@ class LinuxRuntime(private val context: Context) {
             kaliHome,
             ".local/share/backgrounds/droiddesk-ubuntu-touch.jpg",
         )
+        val kaliIconTheme = listOf("Papirus", "Adwaita", "hicolor").firstOrNull { theme ->
+            File(rootfs, "usr/share/icons/$theme/index.theme").isFile
+        } ?: "hicolor"
         val profileInstalled = XfceMobileProfile.install(
             context = context,
             homeDir = kaliHome,
             wallpaperFile = kaliWallpaper,
             wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg",
+            iconThemeName = kaliIconTheme,
         )
         if (!profileInstalled || !kaliWallpaper.isFile || kaliWallpaper.length() == 0L) {
             throw IllegalStateException("Could not install the XFCE wallpaper and profile inside Kali")
