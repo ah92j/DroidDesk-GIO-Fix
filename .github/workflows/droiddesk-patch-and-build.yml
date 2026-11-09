@@ -125,11 +125,12 @@ jobs:
               'chown -R kali:kali',
               'xdpyinfo',
               'xfce-session.log',
-              'private fun runKaliBubblewrapProbe(rootfs: File): KaliProotResult',
-              'private fun ensureKaliBubblewrapSupport(rootfs: File): Boolean',
+              'private fun ensureKaliGlycinAndroidCompatibility(rootfs: File): Boolean',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
-              'apt-get -o Acquire::Retries=3 update',
-              'install -y --only-upgrade proot',
+              'val minimumVersion = "2.2.2+ds-1"',
+              'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
+              'gdk-pixbuf-thumbnailer',
+              'libglycin-2-0',
               'private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String',
               'has_live_process()',
               'has_viewable_window()',
@@ -355,6 +356,8 @@ jobs:
               'libgdk-pixbuf2.0-bin',
               'hicolor-icon-theme',
               'librsvg2-common',
+              'glycin-loaders',
+              'libglycin-2-0',
               'Acquire::ForceIPv4=true',
               'Acquire::https::Verify-Peer=true',
               'Acquire::https::Verify-Host=true',
@@ -407,8 +410,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.14+30' not in pubspec:
-              missing.append('version: 1.4.14+30')
+          if 'version: 1.4.15+31' not in pubspec:
+              missing.append('version: 1.4.15+31')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -601,7 +604,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.14-arm64
+          name: DroidDesk-1.4.15-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
