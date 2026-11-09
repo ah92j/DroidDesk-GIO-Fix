@@ -119,6 +119,9 @@ jobs:
               'private fun stopKaliDesktopProcesses(rootfs: File)',
               'fun getLastKaliDesktopDiagnostic(): String',
               'private fun prepareKaliXfceHomePermissions(rootfs: File)',
+              'fun stopSession()',
+              'process.waitFor(1_500, TimeUnit.MILLISECONDS)',
+              'process.waitFor(2, TimeUnit.SECONDS)',
               'chown -R kali:kali',
               'xdpyinfo',
               'xfce-session.log',
@@ -198,18 +201,30 @@ jobs:
               'thread(name = "device-info")',
               'thread(name = "start-linux-dispatch")',
               'thread(name = "return-to-desktop")',
-              'thread(name = "auto-start-desktop-check")',
+              'private fun resolveDesktopLaunchConfig()',
+              'private fun launchDesktopScreen(config: DesktopLaunchConfig, startSession: Boolean)',
+              'desktopLaunchInProgress',
+              'Flutter AppState is the single owner of the auto-start preference.',
+              'thread(name = "notification-open-desktop")',
           ]
 
           required_desktop_activity = [
               'kaliHealthCheckInProgress',
               'KaliDesktopHealthCheck',
+              'linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = timeoutSeconds)',
               'linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))',
               'startKaliDesktopWithRecovery()',
-              'repeat(2)',
+              'val startupTimeouts = intArrayOf(45, 35)',
               'getLastKaliDesktopDiagnostic()',
               'restartDesktopSession()',
           ]
+
+          if 'maybeAutoStartDesktop' in activity:
+              missing.append('use a single Flutter-owned auto-start path')
+          if 'if (homeIntent.action != ACTION_OPEN_DESKTOP) return' not in activity:
+              missing.append('native HOME launch must not create a competing desktop activity')
+          if 'if (failure == null)' not in activity or 'result.error("stop_linux"' not in activity:
+              missing.append('Stop Server must always complete its MethodChannel result')
 
           required_updater = [
               'private const val MAX_UPDATE_BYTES = 512L * 1024L * 1024L',
@@ -365,13 +380,13 @@ jobs:
               missing.append('all three Kali install/check commands use non-login bash -c')
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
-          if 'linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = 70)' not in desktop_activity:
+          if 'linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = timeoutSeconds)' not in desktop_activity:
               missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs after session recovery')
-          if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
+          if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.11+27' not in pubspec:
-              missing.append('version: 1.4.11+27')
+          if 'version: 1.4.12+28' not in pubspec:
+              missing.append('version: 1.4.12+28')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -564,7 +579,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.11-arm64
+          name: DroidDesk-1.4.12-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
