@@ -24,8 +24,8 @@ REQUIRED_PACKAGES=(
   libasound2-plugins
 )
 
-if [[ "\${1:-}" == "--self-test" ]]; then
-  for package in "\${REQUIRED_PACKAGES[@]}"; do
+if [[ "${1:-}" == "--self-test" ]]; then
+  for package in "${REQUIRED_PACKAGES[@]}"; do
     [[ -n "$package" ]]
   done
   [[ "$WALLPAPER_DIR" == "/usr/share/xfce4/backdrops/Kali Linux" ]]
@@ -38,18 +38,18 @@ install -d -m 0700 "$FEATURE_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 package_installed() {
-  dpkg-query -W -f='\${Status}' "$1" 2>/dev/null | grep -qx 'install ok installed'
+  dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx 'install ok installed'
 }
 
 missing_packages=()
-for package in "\${REQUIRED_PACKAGES[@]}"; do
+for package in "${REQUIRED_PACKAGES[@]}"; do
   if ! package_installed "$package"; then
     missing_packages+=("$package")
   fi
 done
 
-if (("\${#missing_packages[@]}" > 0)); then
-  echo "[Kali Linux] Installing desktop support packages: \${missing_packages[*]}"
+if (("${#missing_packages[@]}" > 0)); then
+  echo "[Kali Linux] Installing desktop support packages: ${missing_packages[*]}"
   apt-get \
     -o Acquire::ForceIPv4=true \
     -o Acquire::Retries=3 \
@@ -65,10 +65,10 @@ if (("\${#missing_packages[@]}" > 0)); then
     -o Dpkg::Use-Pty=0 \
     -o Dpkg::Options::=--force-confdef \
     -o Dpkg::Options::=--force-confold \
-    install -y --no-install-recommends "\${missing_packages[@]}"
+    install -y --no-install-recommends "${missing_packages[@]}"
 fi
 
-for package in "\${REQUIRED_PACKAGES[@]}"; do
+for package in "${REQUIRED_PACKAGES[@]}"; do
   if ! package_installed "$package"; then
     echo "[Kali Linux] Required desktop package did not configure: $package"
     exit 20
@@ -78,7 +78,7 @@ done
 # Make official Kali wallpapers visible in XFCE's normal Desktop Settings folder list.
 install -d -m 0755 "$WALLPAPER_DIR"
 while IFS= read -r -d '' image_file; do
-  image_name="\${image_file##*/}"
+  image_name="${image_file##*/}"
   ln -sfn "$image_file" "$WALLPAPER_DIR/$image_name"
 done < <(
   find /usr/share -type f \
