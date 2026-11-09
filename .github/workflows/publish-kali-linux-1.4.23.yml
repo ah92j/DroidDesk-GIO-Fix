@@ -6,8 +6,8 @@ on:
       - DroidDesk Permanent Release Build
     types:
       - completed
-      - branches:
-        - security/hardening-phase-1
+    branches:
+      - security/hardening-phase-1
 
 permissions:
   actions: read
