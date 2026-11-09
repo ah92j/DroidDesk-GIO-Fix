@@ -788,10 +788,10 @@ class MainActivity : FlutterActivity() {
                                     else {
                                         val running = chrootRuntime.isRunning()
                                         runOnUiThread {
-                                            startForegroundService()
-                                            startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                                putExtra("startSession", !running); putExtra("mode", "chroot"); putExtra("de", desktopEnv)
-                                            })
+                                            launchDesktopScreen(
+                                                DesktopLaunchConfig("chroot", desktopEnv, running),
+                                                startSession = !running,
+                                            )
                                             result.success(true)
                                         }
                                     }
@@ -805,10 +805,10 @@ class MainActivity : FlutterActivity() {
                                     } else {
                                         val running = linuxRuntime.isRunning()
                                         runOnUiThread {
-                                            startForegroundService()
-                                            startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                                putExtra("startSession", !running); putExtra("mode", "proot-kali"); putExtra("de", "xfce4")
-                                            })
+                                            launchDesktopScreen(
+                                                DesktopLaunchConfig("proot-kali", "xfce4", running),
+                                                startSession = !running,
+                                            )
                                             result.success(true)
                                         }
                                     }
@@ -826,10 +826,12 @@ class MainActivity : FlutterActivity() {
                                             }
                                             return@installThread
                                         }
+                                        val running = linuxRuntime.isRunning()
                                         runOnUiThread {
-                                            startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                                putExtra("startSession", !linuxRuntime.isRunning()); putExtra("mode", "termux"); putExtra("de", desktopEnv)
-                                            })
+                                            launchDesktopScreen(
+                                                DesktopLaunchConfig("termux", desktopEnv, running),
+                                                startSession = !running,
+                                            )
                                             result.success(true)
                                         }
                                     }
