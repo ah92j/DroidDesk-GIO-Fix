@@ -455,7 +455,7 @@ class LinuxRuntime(private val context: Context) {
      * actual window manager, panel and desktop processes before reusing it.
      */
     fun isKaliDesktopProcessSetReady(rootfs: File): Boolean {
-        if (!isManagedKaliRootfs(rootfs)) return false
+        if (!isManagedKaliRootfs(rootfs) || !isRunning()) return false
         val probe = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/home/kali",
@@ -465,10 +465,10 @@ class LinuxRuntime(private val context: Context) {
                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 "DISPLAY=:0", "LANG=C.UTF-8", "BASH_ENV=/dev/null",
                 "/bin/bash", "-c",
-                "pgrep -u kali -x xfce4-session >/dev/null && " +
-                    "pgrep -u kali -x xfwm4 >/dev/null && " +
-                    "pgrep -u kali -x xfce4-panel >/dev/null && " +
-                    "pgrep -u kali -x xfdesktop >/dev/null",
+                "pgrep -x xfce4-session >/dev/null && " +
+                    "pgrep -x xfwm4 >/dev/null && " +
+                    "pgrep -x xfce4-panel >/dev/null && " +
+                    "pgrep -x xfdesktop >/dev/null",
             ),
             timeoutMinutes = 1,
             onOutput = { line -> Log.d(TAG, "Kali health probe: ${line.trimEnd()}") },
@@ -488,11 +488,11 @@ class LinuxRuntime(private val context: Context) {
             "BASH_ENV=/dev/null", "/bin/bash", "-c",
             """
             for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch; do
-              pkill -TERM -u kali -x "${'$'}name" 2>/dev/null || true
+              pkill -TERM -x "${'$'}name" 2>/dev/null || true
             done
             sleep 1
             for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch; do
-              pkill -KILL -u kali -x "${'$'}name" 2>/dev/null || true
+              pkill -KILL -x "${'$'}name" 2>/dev/null || true
             done
             """.trimIndent(),
         )
@@ -608,7 +608,7 @@ class LinuxRuntime(private val context: Context) {
             "set -u",
             "export DISPLAY=:0",
             "echo \"[DroidDesk Kali] Waiting for XFCE window manager, panel and desktop...\"",
-            "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -u kali -x xfce4-session >/dev/null 2>&1 && pgrep -u kali -x xfwm4 >/dev/null 2>&1 && pgrep -u kali -x xfce4-panel >/dev/null 2>&1 && pgrep -u kali -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
+            "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -x xfce4-session >/dev/null 2>&1 && pgrep -x xfwm4 >/dev/null 2>&1 && pgrep -x xfce4-panel >/dev/null 2>&1 && pgrep -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
             "  echo \"[DroidDesk Kali] XFCE window manager, panel and desktop are ready.\"",
             "  exit 0",
             "fi",
