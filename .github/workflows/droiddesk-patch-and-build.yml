@@ -115,6 +115,11 @@ jobs:
 
           required_runtime = [
               'fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 50): Boolean',
+              'fun isKaliDesktopProcessSetReady(rootfs: File): Boolean',
+              'private fun stopKaliDesktopProcesses(rootfs: File)',
+              'Kali session wrapper is alive but XFCE is incomplete',
+              'pgrep -u kali -x xfce4-session',
+              'stopKaliDesktopProcesses(rootfs)'
               'File(rootfs, "usr/share/icons/$theme/index.theme").isFile',
               'wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg"',
               '"/usr/bin/sudo", "-E", "-u", "kali", "/bin/bash", "-c", sessionScript',
@@ -313,8 +318,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.9+24' not in pubspec:
-              missing.append('version: 1.4.9+24')
+          if 'version: 1.4.10+25' not in pubspec:
+              missing.append('version: 1.4.10+25')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -507,7 +512,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.9-arm64
+          name: DroidDesk-1.4.10-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
