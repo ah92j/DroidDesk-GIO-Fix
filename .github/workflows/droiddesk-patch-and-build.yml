@@ -119,7 +119,7 @@ jobs:
               'private fun stopKaliDesktopProcesses(rootfs: File)',
               'Kali session wrapper is alive but XFCE is incomplete',
               'pgrep -u kali -x xfce4-session',
-              'stopKaliDesktopProcesses(rootfs)'
+              'stopKaliDesktopProcesses(rootfs)',
               'File(rootfs, "usr/share/icons/$theme/index.theme").isFile',
               'wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg"',
               '"/usr/bin/sudo", "-E", "-u", "kali", "/bin/bash", "-c", sessionScript',
@@ -149,7 +149,7 @@ jobs:
           ]
 
           required_profile = [
-              '.droiddesk-xfce-mobile-v17',
+              '.droiddesk-xfce-mobile-v18',
               'xsettingsConfig(iconThemeName: String)',
               'iconThemeName: String = "Adwaita"',
               'value="$iconThemeName"',
