@@ -1099,9 +1099,9 @@ class LinuxRuntime(private val context: Context) {
             "echo \"[Kali Linux] Starting XFCE with private D-Bus, audio and local GIO VFS...\"",
             "cd /home/kali",
             "if [ -x /usr/bin/dbus-run-session ]; then",
-            "  exec /usr/bin/dbus-run-session -- /bin/bash -c 'printf \"%s\" \"\$DBUS_SESSION_BUS_ADDRESS\" > /home/kali/.local/share/droiddesk/dbus-session-address; chmod 0600 /home/kali/.local/share/droiddesk/dbus-session-address; exec /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1'",
+            "  exec /usr/bin/dbus-run-session -- /bin/bash -c 'printf \"%s\" \"${'$'}DBUS_SESSION_BUS_ADDRESS\" > /home/kali/.local/share/droiddesk/dbus-session-address; chmod 0600 /home/kali/.local/share/droiddesk/dbus-session-address; exec /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1'",
             "else",
-            "  exec /usr/bin/dbus-launch --exit-with-session /bin/bash -c 'printf \"%s\" \"\$DBUS_SESSION_BUS_ADDRESS\" > /home/kali/.local/share/droiddesk/dbus-session-address; chmod 0600 /home/kali/.local/share/droiddesk/dbus-session-address; exec /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1'",
+            "  exec /usr/bin/dbus-launch --exit-with-session /bin/bash -c 'printf \"%s\" \"${'$'}DBUS_SESSION_BUS_ADDRESS\" > /home/kali/.local/share/droiddesk/dbus-session-address; chmod 0600 /home/kali/.local/share/droiddesk/dbus-session-address; exec /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1'",
             "fi",
         ).joinToString("\n")
         val guestCommand = listOf(
