@@ -1000,7 +1000,7 @@ class LinuxRuntime(private val context: Context) {
             Log.i(TAG, "Kali XFCE session is visually healthy; reusing the existing desktop")
             return
         }
-        Log.w(TAG, "Kali XFCE is not visually ready; cleaning stale session components before restart")
+        Log.w(TAG, "Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart")
         stopKaliDesktopProcesses(rootfs)
         sessionProcess?.let { stale ->
             runCatching { stale.destroy() }
