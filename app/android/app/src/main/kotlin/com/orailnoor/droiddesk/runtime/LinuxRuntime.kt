@@ -879,7 +879,7 @@ class LinuxRuntime(private val context: Context) {
                     "BASH_ENV=/dev/null",
                     "/bin/bash", "/root/.droiddesk/desktop-experience.sh",
                 ),
-                timeoutMinutes = 15,
+                timeoutMinutes = 30,
                 onOutput = { line -> Log.i(TAG, "Kali desktop experience: ${line.trimEnd()}") },
             )
             if (result.exitCode != 0) {
