@@ -457,6 +457,180 @@ class LinuxRuntime(private val context: Context) {
      * A live dbus-launch wrapper is not proof that XFCE is usable. Check the
      * actual window manager, panel and desktop processes before reusing it.
      */
+/**
+     * Test the namespace sandbox primitive that glycin uses through bubblewrap.
+     * XFCE processes alone do not prove that GTK can decode SVG icons.
+     */
+    private fun runKaliBubblewrapProbe(rootfs: File): KaliProotResult {
+        val guestCommand = listOf(
+            "/usr/bin/env", "-i",
+            "HOME=/root", "USER=root", "LOGNAME=root",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG=C.UTF-8", "TERM=dumb", "DISPLAY=:0", "BASH_ENV=/dev/null",
+            "/usr/bin/timeout", "15s",
+            "/usr/bin/bwrap",
+            "--unshare-all",
+            "--die-with-parent",
+            "--chdir", "/",
+            "--ro-bind", "/usr", "/usr",
+            "--dev", "/dev",
+            "--tmpfs", "/tmp-droiddesk-probe",
+            "--clearenv",
+            "--setenv", "HOME", "/tmp-droiddesk-probe",
+            "--setenv", "PATH", "/usr/bin:/bin",
+            "--", "/usr/bin/true",
+        )
+        return runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = guestCommand,
+            timeoutMinutes = 1,
+            onOutput = { line -> Log.d(TAG, "Kali bubblewrap probe: ${line.trimEnd()}") },
+        )
+    }
+
+    /**
+     * Newer glycin image loaders start bwrap with namespace and mount operations.
+     * Older Termux PRoot packages cannot emulate those operations. Upgrade the
+     * native package only when the real sandbox probe fails, then test it again.
+     */
+    private fun ensureKaliBubblewrapSupport(rootfs: File): Boolean {
+        val firstProbe = runKaliBubblewrapProbe(rootfs)
+        if (firstProbe.exitCode == 0) {
+            Log.i(TAG, "Kali glycin/bwrap sandbox compatibility check passed")
+            return true
+        }
+
+        val versionBefore = executeCommand(
+            "dpkg-query -W -f='${'$'}{Version}' proot 2>/dev/null || true",
+        ).trim().ifBlank { "unknown" }
+        Log.w(TAG, "Kali bwrap probe failed with native PRoot ${versionBefore}: ${firstProbe.output.takeLast(1600)}")
+
+        val retryMarker = File(rootfs, ".droiddesk-proot-bwrap-upgrade-attempt")
+        val now = System.currentTimeMillis()
+        val previousAttempt = retryMarker.takeIf { it.isFile }
+            ?.readText()?.trim()?.toLongOrNull() ?: 0L
+        val retryWindowMs = 20L * 60L * 1000L
+        var indexUpdate = "Native PRoot update was attempted recently; skipping another immediate package refresh."
+        var packageUpdate = ""
+
+        if (previousAttempt == 0L || now - previousAttempt >= retryWindowMs) {
+            retryMarker.writeText(now.toString())
+            indexUpdate = executeCommand(
+                "timeout --signal=TERM --kill-after=5s 180s " +
+                    "apt-get -o Acquire::Retries=3 update",
+            )
+            if (!indexUpdate.startsWith("Error:")) {
+                packageUpdate = executeCommand(
+                    "timeout --signal=TERM --kill-after=5s 180s " +
+                        "env DEBIAN_FRONTEND=noninteractive apt-get " +
+                        "-o Dpkg::Options::=--force-confdef " +
+                        "-o Dpkg::Options::=--force-confold install -y --only-upgrade proot",
+                )
+                patchShebangs(force = true)
+                relocateProotExecutable()
+            }
+        }
+
+        val versionAfter = executeCommand(
+            "dpkg-query -W -f='${'$'}{Version}' proot 2>/dev/null || true",
+        ).trim().ifBlank { "unknown" }
+        val secondProbe = runKaliBubblewrapProbe(rootfs)
+        if (secondProbe.exitCode == 0) {
+            retryMarker.delete()
+            File(rootfs, "home/kali/.cache/glycin").deleteRecursively()
+            Log.i(TAG, "Kali glycin/bwrap sandbox check passed after PRoot update (${versionAfter})")
+            return true
+        }
+
+        lastKaliDesktopDiagnostic = buildString {
+            append("Kali's image-loader sandbox is not supported by the installed native PRoot.\n")
+            append("PRoot before repair: ").append(versionBefore).append("\n")
+            append("PRoot after repair: ").append(versionAfter).append("\n")
+            append("--- Initial bwrap test ---\n")
+            append(firstProbe.output.takeLast(1400)).append("\n")
+            append("--- Package index update ---\n")
+            append(indexUpdate.takeLast(900)).append("\n")
+            if (packageUpdate.isNotBlank()) {
+                append("--- PRoot package update ---\n")
+                append(packageUpdate.takeLast(900)).append("\n")
+            }
+            append("--- bwrap test after repair ---\n")
+            append(secondProbe.output.takeLast(1800))
+        }.takeLast(6500)
+        Log.e(TAG, "Kali bwrap compatibility repair did not pass: ${lastKaliDesktopDiagnostic}")
+        return false
+    }
+
+    /**
+     * Repair only desktop support packages and generated caches. This does not
+     * reinstall Kali or remove user files, downloaded files, or installed tools.
+     */
+    private fun repairKaliDesktopSupport(rootfs: File): Boolean {
+        val script = """
+            set -Eeuo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            packages=(
+              bubblewrap
+              dbus-daemon
+              dbus-x11
+              shared-mime-info
+              libgdk-pixbuf2.0-bin
+              hicolor-icon-theme
+              adwaita-icon-theme
+              librsvg2-common
+            )
+            install -d -m 1777 /tmp
+            install -d -m 1777 /tmp/.ICE-unix
+            install -d -m 0755 /run/dbus
+
+            missing=()
+            for package in "${'$'}{packages[@]}"; do
+              status="${'$'}(dpkg-query -W -f='${'$'}{Status}' "${'$'}package" 2>/dev/null || true)"
+              [ "${'$'}status" = "install ok installed" ] || missing+=("${'$'}package")
+            done
+            if [ "${'$'}{#missing[@]}" -gt 0 ]; then
+              echo "[DroidDesk Kali] Repairing missing XFCE/GTK support packages: ${'$'}{missing[*]}"
+              apt-get -o Acquire::Retries=3 update
+              apt-get install -y --no-install-recommends "${'$'}{missing[@]}"
+            fi
+
+            dpkg --configure -a
+            if command -v update-mime-database >/dev/null 2>&1; then
+              update-mime-database /usr/share/mime
+            fi
+            if command -v gdk-pixbuf-query-loaders >/dev/null 2>&1; then
+              gdk-pixbuf-query-loaders --update-cache || echo "[DroidDesk Kali] Warning: pixbuf loader cache refresh failed."
+            fi
+            if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+              [ ! -d /usr/share/icons/hicolor ] ||
+                gtk-update-icon-cache -f -t /usr/share/icons/hicolor || true
+              [ ! -d /usr/share/icons/Adwaita ] ||
+                gtk-update-icon-cache -f /usr/share/icons/Adwaita || true
+            fi
+            echo "[DroidDesk Kali] GTK pixbuf, MIME, icon and D-Bus support checks completed."
+        """.trimIndent()
+        val result = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = listOf(
+                "/usr/bin/env", "-i",
+                "HOME=/root", "USER=root", "LOGNAME=root",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null",
+                "/bin/bash", "-c", script,
+            ),
+            timeoutMinutes = 6,
+            onOutput = { line -> Log.i(TAG, line.trimEnd()) },
+        )
+        if (result.exitCode != 0) {
+            lastKaliDesktopDiagnostic = "Kali GTK/D-Bus support repair failed: " + result.output.takeLast(3000)
+            Log.e(TAG, lastKaliDesktopDiagnostic)
+            return false
+        }
+        return true
+    }
+
     /**
      * A live PID list is not enough: XFCE may leave stale processes behind while X11
      * still shows only its blank root window. Require the real window manager, a mapped
@@ -571,6 +745,8 @@ class LinuxRuntime(private val context: Context) {
         xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null || true
         echo "[DroidDesk Kali] XFCE desktop-surface property:"
         xprop -root XFCE_DESKTOP_WINDOW 2>/dev/null || true
+        echo "[DroidDesk Kali] ICE socket directory:"
+        ls -ld /tmp/.ICE-unix /tmp/.X11-unix 2>/dev/null || true
         echo "[DroidDesk Kali] X11 window tree:"
         xwininfo -root -tree 2>/dev/null || true
         exit 1
@@ -630,6 +806,16 @@ class LinuxRuntime(private val context: Context) {
         require(desktopEnv == "xfce4") { "Only XFCE is configured for rootless Kali" }
         if (!isKaliProotDesktopInstalled(rootfs)) {
             throw IllegalStateException("Kali XFCE is not installed inside DroidDesk")
+        }
+        if (!repairKaliDesktopSupport(rootfs)) {
+            throw IllegalStateException(lastKaliDesktopDiagnostic.ifBlank {
+                "Kali's GTK, MIME or D-Bus desktop support could not be repaired."
+            })
+        }
+        if (!ensureKaliBubblewrapSupport(rootfs)) {
+            throw IllegalStateException(lastKaliDesktopDiagnostic.ifBlank {
+                "Kali's glycin image-loader sandbox is incompatible with the installed native PRoot."
+            })
         }
         // Android may restart and lose the PRoot Process handle while guest XFCE survives.
         // Reuse only a visually verified desktop; otherwise clean stale processes even if
@@ -692,7 +878,18 @@ class LinuxRuntime(private val context: Context) {
             throw IllegalStateException(lastKaliDesktopDiagnostic)
         }
 
-        File(tmpDir, ".X11-unix").mkdirs()
+        File(tmpDir, ".X11-unix").apply {
+            mkdirs()
+            setReadable(true, false)
+            setWritable(true, false)
+            setExecutable(true, false)
+        }
+        File(tmpDir, ".ICE-unix").apply {
+            mkdirs()
+            setReadable(true, false)
+            setWritable(true, false)
+            setExecutable(true, false)
+        }
         if (!startPulseAudio()) {
             Log.w(TAG, "Kali desktop will start without a confirmed audio sink")
         }
@@ -707,14 +904,23 @@ class LinuxRuntime(private val context: Context) {
             "export XDG_DATA_HOME=/home/kali/.local/share XDG_DATA_DIRS=/usr/local/share:/usr/share",
             "export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce XDG_SESSION_TYPE=x11",
             "export NO_AT_BRIDGE=1 GTK_A11Y=none GTK_USE_PORTAL=0 GDK_BACKEND=x11",
+            "export GIO_USE_VFS=local GIO_USE_VOLUME_MONITOR=unix GVFS_DISABLE_FUSE=1",
             "rm -rf /tmp/runtime-kali",
             "install -d -m 0700 /tmp/runtime-kali",
+            "install -d -m 1777 /tmp/.ICE-unix",
             "install -d -m 0755 /home/kali/.local/share/droiddesk",
+            "install -d -m 0755 /home/kali/.cache/glycin",
+            "touch /home/kali/.ICEauthority",
+            "chmod 0600 /home/kali/.ICEauthority",
             "touch /home/kali/.local/share/droiddesk/xfce-session.log",
             "unset DBUS_SESSION_BUS_ADDRESS SESSION_MANAGER",
-            "echo \"[DroidDesk Kali] Starting XFCE with writable user configuration and a private D-Bus session...\"",
+            "echo \"[DroidDesk Kali] Starting XFCE with private D-Bus, ICE sockets and local GIO VFS...\"",
             "cd /home/kali",
-            "exec /usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
+            "if [ -x /usr/bin/dbus-run-session ]; then",
+            "  exec /usr/bin/dbus-run-session -- /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
+            "else",
+            "  exec /usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
+            "fi",
         ).joinToString("\n")
         val guestCommand = listOf(
             "/usr/bin/env", "-i",

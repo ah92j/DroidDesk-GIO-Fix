@@ -845,7 +845,7 @@ class DesktopActivity : Activity() {
                 loadingStatus?.text = "Kali desktop could not start"
                 val diagnostic = linuxRuntime.getLastKaliDesktopDiagnostic()
                     .ifBlank { lastDesktopStartupError.orEmpty() }
-                    .takeLast(900)
+                    .takeLast(1800)
                 loadingEstimate?.text = buildString {
                     append("XFCE could not complete its startup. Automatic recovery was attempted. Press Back and check the Kali session log if this continues.")
                     if (diagnostic.isNotBlank()) append("\n\n").append(diagnostic)

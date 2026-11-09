@@ -38,7 +38,13 @@ APT_PACKAGES=(
   kali-linux-default
   xfce4
   xfce4-terminal
+  dbus-daemon
   dbus-x11
+  bubblewrap
+  shared-mime-info
+  libgdk-pixbuf2.0-bin
+  hicolor-icon-theme
+  librsvg2-common
   xclip
   x11-utils
   fonts-noto-core
@@ -57,6 +63,9 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Peer=true"* ]]
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Host=true"* ]]
   [[ " ${APT_OPTIONS[*]} " == *"APT::Keep-Downloaded-Packages=true"* ]]
+  for package in bubblewrap dbus-daemon shared-mime-info libgdk-pixbuf2.0-bin hicolor-icon-theme librsvg2-common; do
+    [[ " ${APT_PACKAGES[*]} " == *" ${package} "* ]]
+  done
   printf '%s\n' "[DroidDesk Kali] APT setup configuration checks passed."
   exit 0
 fi

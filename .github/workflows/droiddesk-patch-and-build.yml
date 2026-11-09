@@ -125,9 +125,17 @@ jobs:
               'chown -R kali:kali',
               'xdpyinfo',
               'xfce-session.log',
+              'private fun runKaliBubblewrapProbe(rootfs: File): KaliProotResult',
+              'private fun ensureKaliBubblewrapSupport(rootfs: File): Boolean',
+              'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
+              'apt-get -o Acquire::Retries=3 update',
+              'install -y --only-upgrade proot',
               'private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String',
               'has_live_process()',
               'has_viewable_window()',
+              'GIO_USE_VFS=local GIO_USE_VOLUME_MONITOR=unix GVFS_DISABLE_FUSE=1',
+              'dbus-run-session',
+              'install -d -m 1777 /tmp/.ICE-unix',
               '_NET_SUPPORTING_WM_CHECK',
               'XFCE_DESKTOP_WINDOW',
               'Map State: IsViewable',
@@ -341,6 +349,12 @@ jobs:
               "dpkg-query -W -f='${Status}' kali-linux-default",
               'https://kali.download/kali/',
               'https://archive.kali.org/kali/',
+              'bubblewrap',
+              'dbus-daemon',
+              'shared-mime-info',
+              'libgdk-pixbuf2.0-bin',
+              'hicolor-icon-theme',
+              'librsvg2-common',
               'Acquire::ForceIPv4=true',
               'Acquire::https::Verify-Peer=true',
               'Acquire::https::Verify-Host=true',
@@ -393,8 +407,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.13+29' not in pubspec:
-              missing.append('version: 1.4.13+29')
+          if 'version: 1.4.14+30' not in pubspec:
+              missing.append('version: 1.4.14+30')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -587,7 +601,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.13-arm64
+          name: DroidDesk-1.4.14-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
