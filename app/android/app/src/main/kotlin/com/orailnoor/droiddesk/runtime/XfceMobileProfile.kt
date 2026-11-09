@@ -368,10 +368,10 @@ object XfceMobileProfile {
           <property name="backdrop" type="empty">
             <property name="screen0" type="empty">
               <property name="monitorbuiltin" type="empty">
+                <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>
                 <property name="workspace0" type="empty">
                   <property name="color-style" type="int" value="0"/>
                   <property name="image-style" type="int" value="5"/>
-                  <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>
                   <property name="last-image" type="string" value="$wallpaperPath"/>
                 </property>
               </property>

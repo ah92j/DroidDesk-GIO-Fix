@@ -93,7 +93,7 @@ echo "[Kali Linux] Official wallpaper choices exposed to XFCE: $wallpaper_count"
 desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 if [[ -f "$desktop_xml" ]]; then
   if ! grep -q 'name="image-path"' "$desktop_xml"; then
-    sed -i '/<property name="image-style"/a\                  <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>' "$desktop_xml"
+    sed -i '\#<property name="monitorbuiltin" type="empty">#a\                <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>' "$desktop_xml"
   fi
   if grep -q 'name="show-trash"' "$desktop_xml"; then
     sed -i -E 's#(<property name="show-trash" type="bool" value=")false("/>)#\1true\2#' "$desktop_xml"

@@ -422,7 +422,7 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.17+33' not in pubspec:
+          if 'version: 1.4.17+34' not in pubspec:
               missing.append('version: 1.4.16+32')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
