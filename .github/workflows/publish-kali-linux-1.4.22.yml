@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '4fc49c484676990b3bd85fc385dd49b20a7a81c5' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download the artifact from the successful source build
