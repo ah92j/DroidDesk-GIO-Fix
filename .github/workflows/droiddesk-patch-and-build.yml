@@ -125,11 +125,14 @@ jobs:
               'chown -R kali:kali',
               'xdpyinfo',
               'xfce-session.log',
-              'Kali session wrapper is alive but XFCE is incomplete',
-              'pgrep -x xfce4-session',
-              'pgrep -x xfwm4',
-              'pgrep -x xfce4-panel',
-              'pgrep -x xfdesktop',
+              'private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String',
+              'has_live_process()',
+              'has_viewable_window()',
+              '_NET_SUPPORTING_WM_CHECK',
+              'Map State: IsViewable',
+              'XFCE is visually ready',
+              'Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart',
+              'for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch xfsettingsd xfconfd; do',
               'stopKaliDesktopProcesses(rootfs)',
               'File(rootfs, "usr/share/icons/$theme/index.theme").isFile',
               'wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg"',
@@ -160,7 +163,7 @@ jobs:
           ]
 
           required_profile = [
-              '.droiddesk-xfce-mobile-v20',
+              '.droiddesk-xfce-mobile-v21',
               'xsettingsConfig(iconThemeName: String)',
               'iconThemeName: String = "Adwaita"',
               'value="$iconThemeName"',
@@ -171,6 +174,10 @@ jobs:
               'TryExec=${exec.substringBefore(\' \')}',
               'exec = "/usr/bin/thunar %u"',
               '<property name="style" type="int" value="2"/>',
+              '<property name="show-home" type="bool" value="true"/>',
+              '<property name="show-filesystem" type="bool" value="true"/>',
+              '<property name="show-trash" type="bool" value="true"/>',
+              '<property name="show-removable" type="bool" value="true"/>',
           ]
 
           required_rootfs_size = [
@@ -385,8 +392,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.12+28' not in pubspec:
-              missing.append('version: 1.4.12+28')
+          if 'version: 1.4.13+29' not in pubspec:
+              missing.append('version: 1.4.13+29')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -579,7 +586,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.12-arm64
+          name: DroidDesk-1.4.13-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
