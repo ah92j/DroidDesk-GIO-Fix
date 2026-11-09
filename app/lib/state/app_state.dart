@@ -105,9 +105,12 @@ class AppState extends ChangeNotifier {
   /// desktop can be stopped from outside Flutter (e.g. the notification's Stop action).
   AppLifecycleListener? _lifecycleListener;
   bool _statusRefreshInFlight = false;
+  bool _initializeStarted = false;
   DateTime? _lastStatusRefreshAt;
 
   Future<void> initialize() async {
+    if (_initializeStarted) return;
+    _initializeStarted = true;
     DroidDeskPlatform.onPackageOperationProgress = _onPackageProgress;
     DroidDeskPlatform.onPackageOperationLog = _onPackageLog;
     _lifecycleListener ??= AppLifecycleListener(
@@ -197,17 +200,24 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     };
 
-    await refreshStatus(force: true);
-    await loadDeviceInfo();
     DroidDeskPlatform.onUpdateProgress = _onUpdateProgress;
+
+    // Load independent startup data together. Serial waits used to delay the
+    // dashboard even though device details are not needed to decide setup state.
+    final prefsFuture = SharedPreferences.getInstance();
+    await Future.wait<void>([
+      refreshStatus(force: true),
+      loadDeviceInfo(),
+    ]);
+
+    final prefs = await prefsFuture;
+    _autoStartDesktop = prefs.getBool('autoStartDesktop') ?? false;
     checkForUpdate();
 
-    final prefs = await SharedPreferences.getInstance();
-    _autoStartDesktop = prefs.getBool('autoStartDesktop') ?? false;
-
     if (_autoStartDesktop && isSetupComplete && !_isRunning) {
-      // Auto-start desktop when the app (launcher) boots up
-      startLinux(mode: 'x11');
+      // Flutter is the sole auto-start owner; MainActivity never launches a
+      // second desktop activity for the same cold start.
+      await startLinux(mode: 'x11');
     }
   }
 
