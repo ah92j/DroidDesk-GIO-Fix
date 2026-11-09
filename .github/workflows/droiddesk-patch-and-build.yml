@@ -184,7 +184,7 @@ jobs:
           ]
 
           required_profile = [
-              '.droiddesk-xfce-mobile-v21',
+              '.droiddesk-xfce-mobile-v22',
               'xsettingsConfig(iconThemeName: String)',
               'iconThemeName: String = "Adwaita"',
               'value="$iconThemeName"',
@@ -422,7 +422,7 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.17+34' not in pubspec:
+          if 'version: 1.4.18+35' not in pubspec:
               missing.append('version: 1.4.16+32')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
