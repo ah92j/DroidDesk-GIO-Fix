@@ -198,6 +198,7 @@ jobs:
               'inode/directory=thunar.desktop;',
               'TryExec=${exec.substringBefore(\' \')}', 
               'droiddesk-browser %U',
+              'droiddesk-browser %U',
               'exec = "/usr/bin/thunar %u"',
               '<property name="style" type="int" value="2"/>',
               '<property name="show-home" type="bool" value="true"/>',
@@ -272,8 +273,8 @@ jobs:
           missing.extend(item for item in required_profile if item not in profile)
           if 'WebBrowser=google-chrome.desktop' in profile:
               missing.append('do not hardcode Chrome as default in the XFCE profile')
-          if 'preservedBrowser' not in profile:
-              missing.append('preserve the selected browser in XFCE helpers.rc')
+          if 'WebBrowser=droiddesk-browser.desktop' not in profile:
+              missing.append('write a real default browser helper entry')
           missing.extend(item for item in required_root_shell if item not in root_shell)
           missing.extend(item for item in required_rootfs_size if item not in rootfs_manager)
           missing.extend(item for item in required_chroot if item not in chroot)
