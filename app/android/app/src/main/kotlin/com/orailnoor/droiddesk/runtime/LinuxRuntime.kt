@@ -450,6 +450,57 @@ class LinuxRuntime(private val context: Context) {
         launcher.setExecutable(true, false)
     }
 
+    /**
+     * A live dbus-launch wrapper is not proof that XFCE is usable. Check the
+     * actual window manager, panel and desktop processes before reusing it.
+     */
+    fun isKaliDesktopProcessSetReady(rootfs: File): Boolean {
+        if (!isManagedKaliRootfs(rootfs)) return false
+        val probe = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/home/kali",
+            guestCommand = listOf(
+                "/usr/bin/env", "-i",
+                "HOME=/home/kali", "USER=kali", "LOGNAME=kali",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "DISPLAY=:0", "LANG=C.UTF-8", "BASH_ENV=/dev/null",
+                "/bin/bash", "-c",
+                "pgrep -u kali -x xfce4-session >/dev/null && " +
+                    "pgrep -u kali -x xfwm4 >/dev/null && " +
+                    "pgrep -u kali -x xfce4-panel >/dev/null && " +
+                    "pgrep -u kali -x xfdesktop >/dev/null",
+            ),
+            timeoutMinutes = 1,
+            onOutput = { line -> Log.d(TAG, "Kali health probe: ${line.trimEnd()}") },
+        )
+        return probe.exitCode == 0 && isRunning()
+    }
+
+    /**
+     * Stop only the failed XFCE session components. Do not kill the whole Kali
+     * user session or unrelated terminal/application processes.
+     */
+    private fun stopKaliDesktopProcesses(rootfs: File) {
+        val cleanup = listOf(
+            "/usr/bin/env", "-i",
+            "HOME=/home/kali", "USER=kali", "LOGNAME=kali",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "BASH_ENV=/dev/null", "/bin/bash", "-c",
+            """
+            for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch; do
+              pkill -TERM -u kali -x "$name" 2>/dev/null || true
+            done
+            sleep 1
+            for name in xfce4-panel xfdesktop xfwm4 xfce4-session startxfce4 dbus-launch; do
+              pkill -KILL -u kali -x "$name" 2>/dev/null || true
+            done
+            """.trimIndent(),
+        )
+        runCatching {
+            runKaliProotCommand(rootfs, "/home/kali", cleanup, 1) { }
+        }.onFailure { Log.w(TAG, "Kali stale-session cleanup failed", it) }
+    }
+
     /** Start Kali XFCE through PRoot and DroidDesk's existing X11/audio services. */
     fun startProotKaliSession(rootfs: File, desktopEnv: String = "xfce4") {
         require(desktopEnv == "xfce4") { "Only XFCE is configured for rootless Kali" }
@@ -457,8 +508,17 @@ class LinuxRuntime(private val context: Context) {
             throw IllegalStateException("Kali XFCE is not installed inside DroidDesk")
         }
         if (isRunning()) {
-            Log.i(TAG, "Kali XFCE session is already running; reusing it")
-            return
+            if (isKaliDesktopProcessSetReady(rootfs)) {
+                Log.i(TAG, "Kali XFCE session is healthy; reusing it")
+                return
+            }
+            Log.w(TAG, "Kali session wrapper is alive but XFCE is incomplete; cleaning stale desktop processes before restart")
+            stopKaliDesktopProcesses(rootfs)
+            sessionProcess?.let { stale ->
+                runCatching { stale.destroy() }
+                runCatching { if (!stale.waitFor(2, TimeUnit.SECONDS)) stale.destroyForcibly() }
+            }
+            sessionProcess = null
         }
 
         val kaliHome = File(rootfs, "home/kali")
@@ -548,7 +608,7 @@ class LinuxRuntime(private val context: Context) {
             "set -u",
             "export DISPLAY=:0",
             "echo \"[DroidDesk Kali] Waiting for XFCE window manager, panel and desktop...\"",
-            "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -x xfwm4 >/dev/null 2>&1 && pgrep -x xfce4-panel >/dev/null 2>&1 && pgrep -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
+            "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -u kali -x xfce4-session >/dev/null 2>&1 && pgrep -u kali -x xfwm4 >/dev/null 2>&1 && pgrep -u kali -x xfce4-panel >/dev/null 2>&1 && pgrep -u kali -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
             "  echo \"[DroidDesk Kali] XFCE window manager, panel and desktop are ready.\"",
             "  exit 0",
             "fi",
@@ -571,6 +631,13 @@ class LinuxRuntime(private val context: Context) {
         )
         if (result.exitCode != 0) {
             Log.e(TAG, "Kali XFCE readiness probe failed: " + result.output.takeLast(3000))
+            stopKaliDesktopProcesses(rootfs)
+            sessionProcess?.let { stale ->
+                runCatching { stale.destroy() }
+                runCatching { if (!stale.waitFor(2, TimeUnit.SECONDS)) stale.destroyForcibly() }
+            }
+            sessionProcess = null
+            stopPulseAudio()
         }
         return result.exitCode == 0
     }
