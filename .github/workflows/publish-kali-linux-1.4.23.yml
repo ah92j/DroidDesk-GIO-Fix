@@ -1,0 +1,66 @@
+name: Publish Kali Linux 1.4.23 Direct APK
+
+on:
+  workflow_run:
+    workflows:
+      - DroidDesk Permanent Release Build
+    types:
+      - completed
+      - branches:
+        - security/hardening-phase-1
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '7ae93fbb8de4bca814ee8e169e171a1a19ac9996' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the artifact from the successful 1.4.23 source build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DIR="$RUNNER_TEMP/kali-linux-apk"
+          mkdir -p "$DOWNLOAD_DIR"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo ah92j/DroidDesk-GIO-Fix \
+            --name Kali-Linux-1.4.23-arm64 \
+            --dir "$DOWNLOAD_DIR"
+
+          APK="$(find "$DOWNLOAD_DIR" -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          test -s "$APK"
+          APK_SIZE="$(stat -c '%s' "$APK")"
+          if [ "$APK_SIZE" -lt 30000000 ] || [ "$APK_SIZE" -gt 100000000 ]; then
+            echo "Unexpected APK size: $APK_SIZE"
+            exit 1
+          fi
+          cp "$APK" Kali-Linux-1.4.23-arm64.apk
+          echo "APK SHA-256:"
+          sha256sum Kali-Linux-1.4.23-arm64.apk
+
+      - name: Publish stable direct download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FILE_NAME="Kali-Linux-1.4.23-arm64.apk"
+          PUBLISH_DIR="$RUNNER_TEMP/kali-linux-apk-download"
+          mkdir -p "$PUBLISH_DIR"
+          cp "$FILE_NAME" "$PUBLISH_DIR/$FILE_NAME"
+          git -C "$PUBLISH_DIR" init -b apk-downloads
+          git -C "$PUBLISH_DIR" config user.name "github-actions[bot]"
+          git -C "$PUBLISH_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$PUBLISH_DIR" add "$FILE_NAME"
+          git -C "$PUBLISH_DIR" commit -m "Publish Kali Linux 1.4.23 ARM64 APK"
+          git -C "$PUBLISH_DIR" remote add origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$PUBLISH_DIR" push --force origin HEAD:refs/heads/apk-downloads
+          echo "Stable APK URL:"
+          echo "https://raw.githubusercontent.com/ah92j/DroidDesk-GIO-Fix/apk-downloads/$FILE_NAME"
