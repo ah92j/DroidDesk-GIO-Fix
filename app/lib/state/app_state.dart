@@ -104,13 +104,15 @@ class AppState extends ChangeNotifier {
   /// Re-reads the runtime status whenever the app returns to the foreground, since the
   /// desktop can be stopped from outside Flutter (e.g. the notification's Stop action).
   AppLifecycleListener? _lifecycleListener;
+  bool _statusRefreshInFlight = false;
+  DateTime? _lastStatusRefreshAt;
 
   Future<void> initialize() async {
     DroidDeskPlatform.onPackageOperationProgress = _onPackageProgress;
     DroidDeskPlatform.onPackageOperationLog = _onPackageLog;
     _lifecycleListener ??= AppLifecycleListener(
       onResume: () {
-        refreshStatus();
+        refreshStatus(force: true);
         checkForUpdate();
       },
     );
@@ -195,7 +197,7 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     };
 
-    await refreshStatus();
+    await refreshStatus(force: true);
     await loadDeviceInfo();
     DroidDeskPlatform.onUpdateProgress = _onUpdateProgress;
     checkForUpdate();
@@ -255,29 +257,35 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshStatus() async {
+  Future<void> refreshStatus({bool force = false}) async {
+    if (_statusRefreshInFlight) return;
+    final now = DateTime.now();
+    final last = _lastStatusRefreshAt;
+    if (!force && last != null && now.difference(last) < const Duration(seconds: 2)) return;
+
+    _statusRefreshInFlight = true;
     try {
-      final status = await DroidDeskPlatform.getRuntimeStatus();
+      final status = await DroidDeskPlatform.getRuntimeStatus().timeout(const Duration(seconds: 12));
       _isBootstrapped = status['isBootstrapped'] == true;
       _isRunning = status['isRunning'] == true;
       _hasRoot = status['hasRoot'] == true;
       _installedDistro = status['distro']?.toString() ?? '';
       _installedDE = status['installedDE']?.toString() ?? '';
-
-      if (_installedDE.isNotEmpty) {
-        await refreshOptionalApps();
-      }
-
+      if (_installedDE.isNotEmpty) await refreshOptionalApps().timeout(const Duration(seconds: 8));
+      _errorMessage = null;
       notifyListeners();
     } catch (e) {
       _errorMessage = 'Failed to get runtime status: $e';
       notifyListeners();
+    } finally {
+      _lastStatusRefreshAt = DateTime.now();
+      _statusRefreshInFlight = false;
     }
   }
 
   Future<void> loadDeviceInfo() async {
     try {
-      _deviceInfo = await DroidDeskPlatform.getDeviceInfo();
+      _deviceInfo = await DroidDeskPlatform.getDeviceInfo().timeout(const Duration(seconds: 8));
       notifyListeners();
     } catch (e) {
       // Non-fatal — continue without device info

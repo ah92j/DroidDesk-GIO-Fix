@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v19"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v20"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -199,7 +199,7 @@ object XfceMobileProfile {
     }
 
     private fun windowManagerConfig(): String = """
-        <?xml version="1.1" encoding="UTF-8"?>
+        <?xml version="1.0" encoding="UTF-8"?>
 
         <channel name="xfwm4" version="1.0">
           <property name="general" type="empty">
@@ -217,7 +217,7 @@ object XfceMobileProfile {
     """.trimIndent() + "\n"
 
     private fun xsettingsConfig(iconThemeName: String): String = """
-        <?xml version="1.1" encoding="UTF-8"?>
+        <?xml version="1.0" encoding="UTF-8"?>
 
         <channel name="xsettings" version="1.0">
           <property name="Xft" type="empty">
@@ -242,7 +242,7 @@ object XfceMobileProfile {
     """.trimIndent() + "\n"
 
     private fun terminalConfig(): String = """
-        <?xml version="1.1" encoding="UTF-8"?>
+        <?xml version="1.0" encoding="UTF-8"?>
 
         <channel name="xfce4-terminal" version="1.0">
           <property name="font-use-system" type="bool" value="false"/>
@@ -274,7 +274,7 @@ object XfceMobileProfile {
     }
 
     private fun panelConfig(): String = """
-        <?xml version="1.1" encoding="UTF-8"?>
+        <?xml version="1.0" encoding="UTF-8"?>
 
         <channel name="xfce4-panel" version="1.0">
           <property name="configver" type="int" value="2"/>
@@ -359,7 +359,7 @@ object XfceMobileProfile {
     """.trimIndent() + "\n"
 
     private fun desktopConfig(wallpaperPath: String): String = """
-        <?xml version="1.1" encoding="UTF-8"?>
+        <?xml version="1.0" encoding="UTF-8"?>
 
         <channel name="xfce4-desktop" version="1.0">
           <property name="last-settings-migration-version" type="uint" value="1"/>

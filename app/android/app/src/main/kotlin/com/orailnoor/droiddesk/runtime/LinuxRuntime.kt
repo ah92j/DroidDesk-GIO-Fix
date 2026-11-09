@@ -77,6 +77,9 @@ class LinuxRuntime(private val context: Context) {
     @Volatile private var activeCommandProcess: Process? = null
     @Volatile private var installLogSink: ((String) -> Unit)? = null
     @Volatile private var packageOperationCancelled = false
+    @Volatile private var lastKaliDesktopDiagnostic: String = ""
+
+    fun getLastKaliDesktopDiagnostic(): String = lastKaliDesktopDiagnostic
 
     fun setInstallLogSink(sink: ((String) -> Unit)?) {
         installLogSink = sink
@@ -548,6 +551,24 @@ class LinuxRuntime(private val context: Context) {
             throw IllegalStateException("Could not install the XFCE wallpaper and profile inside Kali")
         }
         kaliWallpaper.setReadable(true, false)
+        prepareKaliXfceHomePermissions(rootfs)
+
+        val displayProbe = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = listOf(
+                "/usr/bin/env", "-i", "HOME=/root", "USER=root", "LOGNAME=root",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "LANG=C.UTF-8", "TERM=dumb", "DISPLAY=:0", "BASH_ENV=/dev/null",
+                "/usr/bin/xdpyinfo", "-display", ":0",
+            ),
+            timeoutMinutes = 1,
+            onOutput = { line -> Log.d(TAG, "Kali X11 display probe: ${line.trimEnd()}") },
+        )
+        if (displayProbe.exitCode != 0) {
+            lastKaliDesktopDiagnostic = "Kali cannot reach the embedded X11 display :0. " + displayProbe.output.takeLast(2500)
+            throw IllegalStateException(lastKaliDesktopDiagnostic)
+        }
 
         File(tmpDir, ".X11-unix").mkdirs()
         if (!startPulseAudio()) {
@@ -560,13 +581,18 @@ class LinuxRuntime(private val context: Context) {
             "export DISPLAY=:0 LANG=C.UTF-8 TERM=xterm-256color",
             "export PULSE_SERVER=tcp:127.0.0.1:4713",
             "export XDG_RUNTIME_DIR=/tmp/runtime-kali",
+            "export XDG_CONFIG_HOME=/home/kali/.config XDG_CACHE_HOME=/home/kali/.cache",
+            "export XDG_DATA_HOME=/home/kali/.local/share XDG_DATA_DIRS=/usr/local/share:/usr/share",
             "export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce XDG_SESSION_TYPE=x11",
-            "export NO_AT_BRIDGE=1 GTK_A11Y=none",
+            "export NO_AT_BRIDGE=1 GTK_A11Y=none GTK_USE_PORTAL=0 GDK_BACKEND=x11",
             "rm -rf /tmp/runtime-kali",
             "install -d -m 0700 /tmp/runtime-kali",
+            "install -d -m 0755 /home/kali/.local/share/droiddesk",
+            "touch /home/kali/.local/share/droiddesk/xfce-session.log",
             "unset DBUS_SESSION_BUS_ADDRESS SESSION_MANAGER",
-            "echo \"[DroidDesk Kali] Starting XFCE with the Kali-specific desktop profile...\"",
-            "exec /usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4",
+            "echo \"[DroidDesk Kali] Starting XFCE with writable user configuration and a private D-Bus session...\"",
+            "cd /home/kali",
+            "exec /usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
         ).joinToString("\n")
         val guestCommand = listOf(
             "/usr/bin/env", "-i",
@@ -603,17 +629,20 @@ class LinuxRuntime(private val context: Context) {
      * Check readiness inside Kali's PRoot namespace, not in native Termux.
      * A partially running desktop is not considered ready without its panel.
      */
-    fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 50): Boolean {
+    fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 70): Boolean {
         val probeScript = listOf(
             "set -u",
             "export DISPLAY=:0",
-            "echo \"[DroidDesk Kali] Waiting for XFCE window manager, panel and desktop...\"",
+            "echo \"[DroidDesk Kali] Checking X11 and waiting for the complete XFCE session...\"",
+            "if ! xdpyinfo -display :0 >/dev/null 2>&1; then echo \"X11 display :0 is not reachable inside Kali\"; exit 2; fi",
             "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -x xfce4-session >/dev/null 2>&1 && pgrep -x xfwm4 >/dev/null 2>&1 && pgrep -x xfce4-panel >/dev/null 2>&1 && pgrep -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
-            "  echo \"[DroidDesk Kali] XFCE window manager, panel and desktop are ready.\"",
+            "  echo \"[DroidDesk Kali] XFCE session manager, window manager, panel and desktop are ready.\"",
             "  exit 0",
             "fi",
-            "echo \"[DroidDesk Kali] XFCE did not become fully ready. Current guest processes:\"",
-            "ps -eo pid,comm,args 2>/dev/null | grep -E 'xfce4-session|xfce4-panel|xfdesktop|xfwm4|dbus' | grep -v grep || true",
+            "echo \"[DroidDesk Kali] XFCE readiness timeout. Current guest processes:\"",
+            "ps -eo pid,uid,comm,args 2>/dev/null | grep -E 'xfce4-session|xfce4-panel|xfdesktop|xfwm4|dbus' | grep -v grep || true",
+            "echo \"[DroidDesk Kali] XFCE config ownership:\"",
+            "ls -ld /home/kali /home/kali/.config /home/kali/.config/xfce4 /home/kali/.cache /home/kali/.local/share 2>/dev/null || true",
             "exit 1",
         ).joinToString("\n")
         val result = runKaliProotCommand(
@@ -626,11 +655,20 @@ class LinuxRuntime(private val context: Context) {
                 "LANG=C.UTF-8", "TERM=dumb", "DISPLAY=:0",
                 "BASH_ENV=/dev/null", "/bin/bash", "-c", probeScript,
             ),
-            timeoutMinutes = 1,
+            timeoutMinutes = 2,
             onOutput = { line -> Log.i(TAG, line.trimEnd()) },
         )
+        val sessionLog = File(rootfs, "home/kali/.local/share/droiddesk/xfce-session.log")
+        val logTail = runCatching {
+            if (sessionLog.isFile) sessionLog.readText().takeLast(8_000) else "XFCE session log has not been created"
+        }.getOrDefault("Could not read the XFCE session log")
         if (result.exitCode != 0) {
-            Log.e(TAG, "Kali XFCE readiness probe failed: " + result.output.takeLast(3000))
+            lastKaliDesktopDiagnostic = buildString {
+                append(result.output.takeLast(3_500))
+                append("\n--- XFCE session log ---\n")
+                append(logTail)
+            }.takeLast(10_000)
+            Log.e(TAG, "Kali XFCE readiness probe failed: " + lastKaliDesktopDiagnostic)
             stopKaliDesktopProcesses(rootfs)
             sessionProcess?.let { stale ->
                 runCatching { stale.destroy() }
@@ -638,10 +676,37 @@ class LinuxRuntime(private val context: Context) {
             }
             sessionProcess = null
             stopPulseAudio()
+            return false
         }
-        return result.exitCode == 0
+        lastKaliDesktopDiagnostic = ""
+        return true
     }
 
+    private fun prepareKaliXfceHomePermissions(rootfs: File) {
+        val script = """
+            set -Eeuo pipefail
+            install -d -m 0755               /home/kali/.config/xfce4               /home/kali/.config/gtk-3.0               /home/kali/.config/fontconfig               /home/kali/.cache/sessions               /home/kali/.local/share/backgrounds               /home/kali/.local/share/droiddesk               /home/kali/Desktop
+            chown -R kali:kali               /home/kali/.config/xfce4               /home/kali/.config/gtk-3.0               /home/kali/.config/fontconfig               /home/kali/.config/mimeapps.list               /home/kali/.cache/sessions               /home/kali/.local/share/backgrounds               /home/kali/.local/share/droiddesk               /home/kali/Desktop
+        """.trimIndent()
+        val prepared = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/root",
+            guestCommand = listOf(
+                "/usr/bin/env", "-i", "HOME=/root", "USER=root", "LOGNAME=root",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null",
+                "/bin/bash", "-c", script,
+            ),
+            timeoutMinutes = 1,
+            onOutput = { line -> Log.d(TAG, "Kali XFCE profile permissions: ${line.trimEnd()}") },
+        )
+        if (prepared.exitCode != 0) {
+            lastKaliDesktopDiagnostic = "Could not make Kali XFCE home configuration writable: " +
+                prepared.output.takeLast(2500)
+            throw IllegalStateException(lastKaliDesktopDiagnostic)
+        }
+        Log.i(TAG, "Kali XFCE config, cache, desktop and wallpaper paths are owned by kali:kali")
+    }
 
     private fun writeDebianLauncher() {
         val launcher = File(binDir, "start-debian")

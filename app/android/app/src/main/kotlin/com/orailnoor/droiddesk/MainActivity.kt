@@ -92,19 +92,21 @@ class MainActivity : FlutterActivity() {
 
     /** Optional "Auto-Start Linux Desktop" setting: open the chroot desktop whenever the app starts. */
     private fun maybeAutoStartDesktop(launchIntent: Intent) {
-        // Home presses and the notification's Open action already launch the desktop.
         val isHomeLaunch = launchIntent.action == Intent.ACTION_MAIN && launchIntent.hasCategory(Intent.CATEGORY_HOME)
         if (isHomeLaunch || launchIntent.action == ACTION_OPEN_DESKTOP) return
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-        val autoStart = prefs.getBoolean("flutter.autoStartDesktop", false)
-        if (autoStart && chrootRuntime.hasRoot() && chrootRuntime.isRootfsReady()) {
-            startForegroundService()
-            val desktopIntent = Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                putExtra("startSession", !chrootRuntime.isRunning())
-                putExtra("mode", "chroot")
-                putExtra("de", "xfce4")
+        if (!prefs.getBoolean("flutter.autoStartDesktop", false)) return
+        thread(name = "auto-start-desktop-check") {
+            val ready = chrootRuntime.hasRoot() && chrootRuntime.isRootfsReady()
+            if (ready) {
+                val running = chrootRuntime.isRunning()
+                runOnUiThread {
+                    startForegroundService()
+                    startActivity(Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
+                        putExtra("startSession", !running); putExtra("mode", "chroot"); putExtra("de", "xfce4")
+                    })
+                }
             }
-            startActivity(desktopIntent)
         }
     }
 
@@ -293,28 +295,36 @@ class MainActivity : FlutterActivity() {
 
                 // ── Runtime Status ──
                 "getRuntimeStatus" -> {
-                    val rooted = chrootRuntime.hasRoot()
-                    val installedDistro = chrootRuntime.getInstalledDistro().ifBlank { "ubuntu" }
-                    val kaliProotReady = !rooted && installedDistro == "kali" &&
-                        chrootRuntime.isRootfsReady() &&
-                        linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))
-                    result.success(mapOf(
-                        "isBootstrapped" to if (rooted) chrootRuntime.isRootfsReady() else if (kaliProotReady) true else linuxRuntime.isBootstrapped(),
-                        "isRunning" to if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning(),
-                        "hasRoot" to rooted,
-                        "distro" to when {
-                            rooted -> "$installedDistro-chroot"
-                            kaliProotReady -> "kali-proot"
-                            else -> "termux-native"
-                        },
-                        "installedDE" to when {
-                            rooted -> chrootRuntime.getInstalledDE()
-                            kaliProotReady -> "xfce4"
-                            else -> linuxRuntime.getInstalledDE()
-                        },
-                        "rootfsPath" to if (rooted || kaliProotReady) chrootRuntime.getRootfsPath() else "",
-                        "rootfsSizeMB" to if (rooted || kaliProotReady) chrootRuntime.getRootfsSizeMB() else 0L
-                    ))
+                    thread(name = "runtime-status") {
+                        try {
+                            val rooted = chrootRuntime.hasRoot()
+                            val installedDistro = chrootRuntime.getInstalledDistro().ifBlank { "ubuntu" }
+                            val rootfsReady = if (rooted || installedDistro == "kali") chrootRuntime.isRootfsReady() else false
+                            val kaliProotReady = !rooted && installedDistro == "kali" &&
+                                rootfsReady && linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))
+                            val status = mapOf(
+                                "isBootstrapped" to if (rooted) rootfsReady else if (kaliProotReady) true else linuxRuntime.isBootstrapped(),
+                                "isRunning" to if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning(),
+                                "hasRoot" to rooted,
+                                "distro" to when {
+                                    rooted -> "$installedDistro-chroot"
+                                    kaliProotReady -> "kali-proot"
+                                    else -> "termux-native"
+                                },
+                                "installedDE" to when {
+                                    rooted -> chrootRuntime.getInstalledDE()
+                                    kaliProotReady -> "xfce4"
+                                    else -> linuxRuntime.getInstalledDE()
+                                },
+                                "rootfsPath" to if (rooted || kaliProotReady) chrootRuntime.getRootfsPath() else "",
+                                "rootfsSizeMB" to if (rooted || kaliProotReady) chrootRuntime.getRootfsSizeMB() else 0L
+                            )
+                            runOnUiThread { result.success(status) }
+                        } catch (error: Throwable) {
+                            Log.e(TAG, "Runtime status query failed", error)
+                            runOnUiThread { result.error("runtime_status", error.message, null) }
+                        }
+                    }
                 }
 
                 "getKaliInstallStatus" -> {
@@ -323,21 +333,26 @@ class MainActivity : FlutterActivity() {
 
                 // ── Device Info ──
                 "getDeviceInfo" -> {
-                    result.success(mapOf(
-                        "model" to Build.MODEL,
-                        "brand" to Build.BRAND,
-                        "androidVersion" to Build.VERSION.RELEASE,
-                        "sdkVersion" to Build.VERSION.SDK_INT,
-                        "cpuAbi" to Build.SUPPORTED_ABIS.firstOrNull(),
-                        "gpuVendor" to getGpuVendor(),
-                        "graphicsMode" to if (chrootRuntime.hasRoot()) {
-                            "Software (llvmpipe)"
-                        } else {
-                            linuxRuntime.getGraphicsMode()
-                        },
-                        "totalRamMB" to getTotalRam(),
-                        "availableStorageMB" to getAvailableStorage()
-                    ))
+                    thread(name = "device-info") {
+                        try {
+                            val rooted = chrootRuntime.hasRoot()
+                            val info = mapOf(
+                                "model" to Build.MODEL,
+                                "brand" to Build.BRAND,
+                                "androidVersion" to Build.VERSION.RELEASE,
+                                "sdkVersion" to Build.VERSION.SDK_INT,
+                                "cpuAbi" to Build.SUPPORTED_ABIS.firstOrNull(),
+                                "gpuVendor" to getGpuVendor(),
+                                "graphicsMode" to if (rooted) "Software (llvmpipe)" else linuxRuntime.getGraphicsMode(),
+                                "totalRamMB" to getTotalRam(),
+                                "availableStorageMB" to getAvailableStorage()
+                            )
+                            runOnUiThread { result.success(info) }
+                        } catch (error: Throwable) {
+                            Log.w(TAG, "Device info query failed", error)
+                            runOnUiThread { result.success(emptyMap<String, Any>()) }
+                        }
+                    }
                 }
 
                 // ── Root checks ──
@@ -798,106 +813,94 @@ class MainActivity : FlutterActivity() {
                 // ── Start Linux session ──
                 "startLinux" -> {
                     val desktopEnv = call.argument<String>("de") ?: "xfce4"
-                    val mode = call.argument<String>("mode") ?: "x11"
-                    var width = call.argument<Int>("width") ?: 1920
-                    var height = call.argument<Int>("height") ?: 1080
-
-                    if (height > 1080) {
-                        val scale = 1080.0 / height
-                        width = (width * scale).toInt()
-                        height = 1080
-                    }
-
-                    startForegroundService()
-
-                    if (chrootRuntime.hasRoot()) {
-                        // Rooted fast path: chroot + LorieView
-                        thread {
-                            if (!chrootRuntime.isRootfsReady()) {
-                                Log.w(TAG, "Chroot rootfs not ready; cannot start session")
-                                runOnUiThread { result.success(false) }
-                                return@thread
-                            }
-                            runOnUiThread {
-                                val intent = Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                    putExtra("startSession", !chrootRuntime.isRunning())
-                                    putExtra("mode", "chroot")
-                                    putExtra("de", desktopEnv)
+                    thread(name = "start-linux-dispatch") {
+                        try {
+                            val rooted = chrootRuntime.hasRoot()
+                            val installedDistro = chrootRuntime.getInstalledDistro()
+                            val rootfsReady = if (rooted || installedDistro == "kali") chrootRuntime.isRootfsReady() else false
+                            when {
+                                rooted -> {
+                                    if (!rootfsReady) runOnUiThread { result.success(false) }
+                                    else {
+                                        val running = chrootRuntime.isRunning()
+                                        runOnUiThread {
+                                            startForegroundService()
+                                            startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
+                                                putExtra("startSession", !running); putExtra("mode", "chroot"); putExtra("de", desktopEnv)
+                                            })
+                                            result.success(true)
+                                        }
+                                    }
                                 }
-                                startActivity(intent)
-                                result.success(true)
-                            }
-                        }
-                    } else if (chrootRuntime.getInstalledDistro() == "kali" &&
-                        chrootRuntime.isRootfsReady()) {
-                        if (!linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))) {
-                            runOnUiThread {
-                                Toast.makeText(this@MainActivity, "Kali desktop is not installed inside DroidDesk yet. Complete Kali setup first.", Toast.LENGTH_LONG).show()
-                                result.success(false)
-                            }
-                        } else {
-                            runOnUiThread {
-                                val intent = Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                    putExtra("startSession", !linuxRuntime.isRunning())
-                                    putExtra("mode", "proot-kali")
-                                    putExtra("de", "xfce4")
+                                installedDistro == "kali" && rootfsReady -> {
+                                    if (!linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))) {
+                                        runOnUiThread {
+                                            Toast.makeText(this@MainActivity, "Kali desktop is not installed inside DroidDesk yet. Complete Kali setup first.", Toast.LENGTH_LONG).show()
+                                            result.success(false)
+                                        }
+                                    } else {
+                                        val running = linuxRuntime.isRunning()
+                                        runOnUiThread {
+                                            startForegroundService()
+                                            startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
+                                                putExtra("startSession", !running); putExtra("mode", "proot-kali"); putExtra("de", "xfce4")
+                                            })
+                                            result.success(true)
+                                        }
+                                    }
                                 }
-                                startActivity(intent)
-                                result.success(true)
-                            }
-                        }
-                    } else {
-                        // Non-root fallback: native DroidDesk userspace
-                        installThread("start-linux-native") {
-                            linuxRuntime.extractBootstrapIfNeeded(applicationContext)
-                            val installed = linuxRuntime.getInstalledDE()
-                            val ready = installed == desktopEnv ||
-                                linuxRuntime.installDesktopEnvironmentNative(desktopEnv)
-                            if (!ready) {
-                                Log.e(TAG, "Native Termux desktop setup failed; session was not launched")
-                                runOnUiThread {
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "Native Linux setup failed. Check the setup log.",
-                                        Toast.LENGTH_LONG,
-                                    ).show()
-                                    result.success(false)
+                                else -> {
+                                    startForegroundService()
+                                    installThread("start-linux-native") {
+                                        linuxRuntime.extractBootstrapIfNeeded(applicationContext)
+                                        val installed = linuxRuntime.getInstalledDE()
+                                        val ready = installed == desktopEnv || linuxRuntime.installDesktopEnvironmentNative(desktopEnv)
+                                        if (!ready) {
+                                            runOnUiThread {
+                                                Toast.makeText(this@MainActivity, "Native Linux setup failed. Check the setup log.", Toast.LENGTH_LONG).show()
+                                                result.success(false)
+                                            }
+                                            return@installThread
+                                        }
+                                        runOnUiThread {
+                                            startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
+                                                putExtra("startSession", !linuxRuntime.isRunning()); putExtra("mode", "termux"); putExtra("de", desktopEnv)
+                                            })
+                                            result.success(true)
+                                        }
+                                    }
                                 }
-                                return@installThread
                             }
-                            runOnUiThread {
-                                val intent = Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                                    putExtra("startSession", !linuxRuntime.isRunning())
-                                    putExtra("mode", "termux")
-                                    putExtra("de", desktopEnv)
-                                }
-                                startActivity(intent)
-                                result.success(true)
-                            }
+                        } catch (error: Throwable) {
+                            Log.e(TAG, "Start Linux dispatch failed", error)
+                            runOnUiThread { result.error("start_linux", error.message, null) }
                         }
                     }
                 }
-
                 "launchDesktopActivity" -> {
-                    val rooted = chrootRuntime.hasRoot()
-                    val kaliProot = !rooted && chrootRuntime.getInstalledDistro() == "kali" &&
-                        chrootRuntime.isRootfsReady() &&
-                        linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))
-                    val running = if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning()
-                    if (!running) startForegroundService()
-                    val intent = Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
-                        putExtra("startSession", !running)
-                        putExtra("mode", when {
-                            rooted -> "chroot"
-                            kaliProot -> "proot-kali"
-                            else -> "termux"
-                        })
-                        putExtra("de", if (rooted || kaliProot) "xfce4" else linuxRuntime.getInstalledDE())
+                    thread(name = "return-to-desktop") {
+                        try {
+                            val rooted = chrootRuntime.hasRoot()
+                            val installedDistro = chrootRuntime.getInstalledDistro()
+                            val rootfsReady = if (rooted || installedDistro == "kali") chrootRuntime.isRootfsReady() else false
+                            val kaliProot = !rooted && installedDistro == "kali" && rootfsReady &&
+                                linuxRuntime.isKaliProotDesktopInstalled(File(filesDir, "rootfs"))
+                            val running = if (rooted) chrootRuntime.isRunning() else linuxRuntime.isRunning()
+                            val mode = when { rooted -> "chroot"; kaliProot -> "proot-kali"; else -> "termux" }
+                            val desktop = if (rooted || kaliProot) "xfce4" else linuxRuntime.getInstalledDE()
+                            runOnUiThread {
+                                if (!running) startForegroundService()
+                                startActivity(Intent(this@MainActivity, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
+                                    putExtra("startSession", !running); putExtra("mode", mode); putExtra("de", desktop)
+                                })
+                                result.success(true)
+                            }
+                        } catch (error: Throwable) {
+                            Log.e(TAG, "Return to desktop failed", error)
+                            runOnUiThread { result.error("launch_desktop", error.message, null) }
+                        }
                     }
-                    startActivity(intent)
-                    result.success(true)
                 }
-
                 "stopLinux" -> {
                     // A desktop screen left in the back stack would reopen onto a dead session.
                     com.orailnoor.droiddesk.view.DesktopActivity.finishIfOpen()

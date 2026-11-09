@@ -654,43 +654,66 @@ class DesktopActivity : Activity() {
         Thread({
             Log.i(TAG, "Starting Linux desktop session after X server connection")
             try {
-                if (sessionMode == "chroot") {
-                    chrootRuntime.startSession(desktopEnv)
-
-                    // Setup Android App Integration
-                    val rootfsPath = chrootRuntime.getRootfsPath()
-                    chrootRuntime.executeCommand("mkdir -p /tmp && mkfifo /tmp/android_intent_pipe && chmod 666 /tmp/android_intent_pipe") {}
-                    AndroidAppSync.syncApps(this@DesktopActivity, rootfsPath)
-                    startIntentListener(rootfsPath)
-                } else if (sessionMode == "proot-kali") {
-                    linuxRuntime.startProotKaliSession(File(filesDir, "rootfs"), desktopEnv)
-                } else {
-                    linuxRuntime.startSession(desktopEnv, "x11")
-                }
                 val ready = when (sessionMode) {
-                    "chroot" -> chrootRuntime.waitForDesktopReady(desktopEnv)
-                    "proot-kali" -> linuxRuntime.waitForKaliDesktopReady(File(filesDir, "rootfs"))
-                    else -> linuxRuntime.waitForDesktopReady(desktopEnv)
+                    "chroot" -> {
+                        chrootRuntime.startSession(desktopEnv)
+                        val rootfsPath = chrootRuntime.getRootfsPath()
+                        chrootRuntime.executeCommand("mkdir -p /tmp && mkfifo /tmp/android_intent_pipe && chmod 666 /tmp/android_intent_pipe") {}
+                        AndroidAppSync.syncApps(this@DesktopActivity, rootfsPath)
+                        startIntentListener(rootfsPath)
+                        chrootRuntime.waitForDesktopReady(desktopEnv)
+                    }
+                    "proot-kali" -> startKaliDesktopWithRecovery()
+                    else -> {
+                        linuxRuntime.startSession(desktopEnv, "x11")
+                        linuxRuntime.waitForDesktopReady(desktopEnv)
+                    }
                 }
                 revealDesktop(ready)
             } catch (error: Throwable) {
+                lastDesktopStartupError = error.message ?: error.javaClass.simpleName
                 Log.e(TAG, "Desktop session failed", error)
                 revealDesktop(false)
             }
         }, "LinuxDesktopSession").start()
     }
 
+    private fun startKaliDesktopWithRecovery(): Boolean {
+        val rootfs = File(filesDir, "rootfs")
+        var lastError: Throwable? = null
+        repeat(2) { attempt ->
+            try {
+                if (attempt > 0) Log.w(TAG, "Retrying Kali XFCE startup after the first readiness check failed")
+                linuxRuntime.startProotKaliSession(rootfs, desktopEnv)
+                if (linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = 70)) {
+                    lastDesktopStartupError = null
+                    return true
+                }
+                Log.w(TAG, "Kali XFCE readiness attempt ${attempt + 1} failed: ${linuxRuntime.getLastKaliDesktopDiagnostic().takeLast(1800)}")
+            } catch (error: Throwable) {
+                lastError = error
+                Log.e(TAG, "Kali XFCE startup attempt ${attempt + 1} failed", error)
+            }
+        }
+        lastDesktopStartupError = lastError?.message
+        return false
+    }
+
     private fun waitForDesktopAndReveal() {
         Thread({
             val ready = when (sessionMode) {
                 "chroot" -> chrootRuntime.waitForDesktopReady(desktopEnv)
-                "proot-kali" -> linuxRuntime.waitForKaliDesktopReady(File(filesDir, "rootfs"))
+                "proot-kali" -> {
+                    val rootfs = File(filesDir, "rootfs")
+                    if (linuxRuntime.isKaliDesktopProcessSetReady(rootfs)) true else startKaliDesktopWithRecovery()
+                }
                 else -> linuxRuntime.waitForDesktopReady(desktopEnv)
             }
             revealDesktop(ready)
         }, "LinuxDesktopReady").start()
     }
 
+    private var lastDesktopStartupError: String? = null
     /** Follows the theme picked in the app (Flutter stores it as flutter.theme_mode). */
     private fun isLightTheme(): Boolean {
         val mode = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
@@ -810,10 +833,16 @@ class DesktopActivity : Activity() {
                     bringToFront()
                 }
                 loadingStatus?.text = "Kali desktop could not start"
-                loadingEstimate?.text = "XFCE did not become ready. Close this screen and open Kali Desktop again."
+                val diagnostic = linuxRuntime.getLastKaliDesktopDiagnostic()
+                    .ifBlank { lastDesktopStartupError.orEmpty() }
+                    .takeLast(900)
+                loadingEstimate?.text = buildString {
+                    append("XFCE could not complete its startup. Automatic recovery was attempted. Press Back and check the Kali session log if this continues.")
+                    if (diagnostic.isNotBlank()) append("\n\n").append(diagnostic)
+                }
                 collapsedControl?.visibility = View.INVISIBLE
                 controlOverlay?.visibility = View.INVISIBLE
-                Log.e(TAG, "Kali desktop startup failed readiness checks; keeping recovery screen visible")
+                Log.e(TAG, "Kali desktop startup failed after recovery attempts: $diagnostic")
                 Toast.makeText(this@DesktopActivity, "Kali XFCE failed to start. Reopen Kali Desktop to retry.", Toast.LENGTH_LONG).show()
                 return@runOnUiThread
             }

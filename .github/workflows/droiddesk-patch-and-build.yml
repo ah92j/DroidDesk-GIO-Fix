@@ -114,9 +114,14 @@ jobs:
           ).read_text()
 
           required_runtime = [
-              'fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 50): Boolean',
+              'fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 70): Boolean',
               'fun isKaliDesktopProcessSetReady(rootfs: File): Boolean',
               'private fun stopKaliDesktopProcesses(rootfs: File)',
+              'fun getLastKaliDesktopDiagnostic(): String',
+              'private fun prepareKaliXfceHomePermissions(rootfs: File)',
+              'chown -R kali:kali',
+              'xdpyinfo',
+              'xfce-session.log',
               'Kali session wrapper is alive but XFCE is incomplete',
               'pgrep -x xfce4-session',
               'pgrep -x xfwm4',
@@ -152,7 +157,7 @@ jobs:
           ]
 
           required_profile = [
-              '.droiddesk-xfce-mobile-v19',
+              '.droiddesk-xfce-mobile-v20',
               'xsettingsConfig(iconThemeName: String)',
               'iconThemeName: String = "Adwaita"',
               'value="$iconThemeName"',
@@ -163,6 +168,13 @@ jobs:
               'TryExec=${exec.substringBefore(\' \')}',
               'exec = "/usr/bin/thunar %u"',
               '<property name="style" type="int" value="2"/>',
+          ]
+
+          required_rootfs_size = [
+              'ROOTFS_SIZE_CACHE_TTL_MS',
+              'refreshRootfsSizeInBackground',
+              'rootfs-size-cache',
+              'invalidateRootfsSizeCache()',
           ]
 
           required_root_shell = [
@@ -182,12 +194,20 @@ jobs:
               'val installedDistro = chrootRuntime.getInstalledDistro()',
               'setOf("ubuntu", "kali")',
               '"$installedDistro-chroot"',
+              'thread(name = "runtime-status")',
+              'thread(name = "device-info")',
+              'thread(name = "start-linux-dispatch")',
+              'thread(name = "return-to-desktop")',
+              'thread(name = "auto-start-desktop-check")',
           ]
 
           required_desktop_activity = [
               'kaliHealthCheckInProgress',
               'KaliDesktopHealthCheck',
               'linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))',
+              'startKaliDesktopWithRecovery()',
+              'repeat(2)',
+              'getLastKaliDesktopDiagnostic()',
               'restartDesktopSession()',
           ]
 
@@ -202,6 +222,7 @@ jobs:
           missing.extend(item for item in required_audio_output if item not in audio_output)
           missing.extend(item for item in required_profile if item not in profile)
           missing.extend(item for item in required_root_shell if item not in root_shell)
+          missing.extend(item for item in required_rootfs_size if item not in rootfs_manager)
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_desktop_activity if item not in desktop_activity)
@@ -309,6 +330,7 @@ jobs:
               'adwaita-icon-theme',
               'thunar',
               'exo-utils',
+              'procps',
               "dpkg-query -W -f='${Status}' thunar",
               'test -x /usr/bin/thunar',
               'test -x /usr/bin/exo-open',
@@ -348,8 +370,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.10+26' not in pubspec:
-              missing.append('version: 1.4.10+26')
+          if 'version: 1.4.11+27' not in pubspec:
+              missing.append('version: 1.4.11+27')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -542,7 +564,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.10-arm64
+          name: DroidDesk-1.4.11-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

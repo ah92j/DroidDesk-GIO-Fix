@@ -12,6 +12,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.thread
 
@@ -39,6 +40,7 @@ class RootfsManager(private val context: Context) {
         private const val NETWORK_READ_TIMEOUT_MS = 60_000
         private const val ARCHIVE_PROCESS_TIMEOUT_MINUTES = 90L
         private const val MAX_LOG_TAIL_BYTES = 8 * 1024L
+        private const val ROOTFS_SIZE_CACHE_TTL_MS = 5 * 60 * 1000L
 
         /** Official ARM64 rootfs archives. */
         val DISTRO_URLS: Map<String, String> = mapOf(
@@ -72,6 +74,12 @@ class RootfsManager(private val context: Context) {
     private val configFile: File get() = File(baseDir, "distro.conf")
     private val deConfigFile: File get() = File(baseDir, "de.conf")
     private val setupMarker: File get() = File(baseDir, "SETUP_COMPLETE")
+
+    private val rootfsSizeCacheFile: File get() = File(baseDir, ".rootfs-size-cache")
+    @Volatile private var cachedRootfsSizeMB: Long? = null
+    @Volatile private var cachedRootfsSizeAt: Long = 0L
+    @Volatile private var rootfsSizeCacheLoaded = false
+    private val rootfsSizeRefreshActive = AtomicBoolean(false)
 
     // -------------------------------------------------------------------------
     // Status
@@ -108,9 +116,57 @@ class RootfsManager(private val context: Context) {
     fun getRootfsPath(): String = rootfsDir.absolutePath
 
     fun getRootfsSizeMB(): Long {
-        if (!rootfsDir.isDirectory || Files.isSymbolicLink(rootfsDir.toPath())) return 0L
-        return runCatching { calculateDirSize(rootfsDir) / (1024L * 1024L) }
-            .getOrDefault(0L)
+        val cached = loadRootfsSizeCache()
+        val stale = System.currentTimeMillis() - cachedRootfsSizeAt > ROOTFS_SIZE_CACHE_TTL_MS
+        if (cached == null || stale) refreshRootfsSizeInBackground()
+        return cached ?: 0L
+    }
+
+    private fun loadRootfsSizeCache(): Long? {
+        if (rootfsSizeCacheLoaded) return cachedRootfsSizeMB
+        synchronized(this) {
+            if (rootfsSizeCacheLoaded) return cachedRootfsSizeMB
+            rootfsSizeCacheLoaded = true
+            runCatching {
+                val lines = rootfsSizeCacheFile.readLines()
+                if (lines.size >= 2) {
+                    val timestamp = lines[0].toLongOrNull() ?: 0L
+                    val size = lines[1].toLongOrNull()
+                    if (size != null && size >= 0L && timestamp > 0L) {
+                        cachedRootfsSizeAt = timestamp
+                        cachedRootfsSizeMB = size
+                    }
+                }
+            }.onFailure { Log.d(TAG, "Rootfs size cache unavailable: ${it.message}") }
+            return cachedRootfsSizeMB
+        }
+    }
+
+    private fun refreshRootfsSizeInBackground() {
+        if (!rootfsSizeRefreshActive.compareAndSet(false, true)) return
+        thread(name = "rootfs-size-cache", isDaemon = true) {
+            try {
+                if (!rootfsDir.isDirectory || Files.isSymbolicLink(rootfsDir.toPath())) return@thread
+                val sizeMb = calculateDirSize(rootfsDir) / (1024L * 1024L)
+                val timestamp = System.currentTimeMillis()
+                cachedRootfsSizeMB = sizeMb
+                cachedRootfsSizeAt = timestamp
+                runCatching {
+                    rootfsSizeCacheFile.writeText(timestamp.toString() + "\n" + sizeMb.toString() + "\n")
+                }.onFailure { Log.w(TAG, "Could not persist rootfs size cache", it) }
+            } catch (error: Throwable) {
+                Log.w(TAG, "Background rootfs size calculation failed", error)
+            } finally {
+                rootfsSizeRefreshActive.set(false)
+            }
+        }
+    }
+
+    private fun invalidateRootfsSizeCache() {
+        cachedRootfsSizeMB = null
+        cachedRootfsSizeAt = 0L
+        rootfsSizeCacheLoaded = true
+        runCatching { Files.deleteIfExists(rootfsSizeCacheFile.toPath()) }
     }
 
     /**
@@ -663,6 +719,7 @@ class RootfsManager(private val context: Context) {
             newRootfsMoved = true
 
             writeAtomically(setupMarker, distro)
+            invalidateRootfsSizeCache()
 
             if (oldRootfsMoved) {
                 runCatching { deletePath(backupRootfsDir) }

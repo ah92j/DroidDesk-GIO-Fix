@@ -45,6 +45,7 @@ APT_PACKAGES=(
   adwaita-icon-theme
   thunar
   exo-utils
+  procps
 )
 
 # CI-only validation mode. This does not modify /etc, /var, dpkg, or the network.
