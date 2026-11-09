@@ -140,7 +140,7 @@ class DesktopActivity : Activity() {
         desktopEnv = intent.getStringExtra("de") ?: "xfce4"
         estimatedLoadingSeconds = when {
             !shouldStartSession -> 10
-            sessionMode == "proot-kali" -> 55
+            sessionMode == "proot-kali" -> 45
             else -> 30
         }
 
@@ -219,7 +219,7 @@ class DesktopActivity : Activity() {
             bringToFront()
         }
         logoAnimator?.start()
-        estimatedLoadingSeconds = if (sessionMode == "proot-kali") 55 else 30
+        estimatedLoadingSeconds = if (sessionMode == "proot-kali") 45 else 30
         loadingStartedAt = android.os.SystemClock.elapsedRealtime()
         loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
         loadingMessageHandler.postDelayed(loadingEstimateTicker, 1_000)
@@ -681,15 +681,25 @@ class DesktopActivity : Activity() {
     private fun startKaliDesktopWithRecovery(): Boolean {
         val rootfs = File(filesDir, "rootfs")
         var lastError: Throwable? = null
-        repeat(2) { attempt ->
+        // Avoid the old 2 x 70-second wait, which kept the app on a blank screen
+        // for over two minutes. One clean retry is enough after stale XFCE processes
+        // and their Xfce profile state have been cleaned by the runtime.
+        val startupTimeouts = intArrayOf(45, 35)
+        startupTimeouts.forEachIndexed { attempt, timeoutSeconds ->
             try {
-                if (attempt > 0) Log.w(TAG, "Retrying Kali XFCE startup after the first readiness check failed")
+                if (attempt > 0) {
+                    Log.w(TAG, "Retrying Kali XFCE once with a clean session")
+                }
                 linuxRuntime.startProotKaliSession(rootfs, desktopEnv)
-                if (linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = 70)) {
+                if (linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = timeoutSeconds)) {
                     lastDesktopStartupError = null
                     return true
                 }
-                Log.w(TAG, "Kali XFCE readiness attempt ${attempt + 1} failed: ${linuxRuntime.getLastKaliDesktopDiagnostic().takeLast(1800)}")
+                Log.w(
+                    TAG,
+                    "Kali XFCE readiness attempt ${attempt + 1} failed: " +
+                        linuxRuntime.getLastKaliDesktopDiagnostic().takeLast(1800),
+                )
             } catch (error: Throwable) {
                 lastError = error
                 Log.e(TAG, "Kali XFCE startup attempt ${attempt + 1} failed", error)
