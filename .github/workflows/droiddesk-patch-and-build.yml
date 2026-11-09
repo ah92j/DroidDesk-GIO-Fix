@@ -131,6 +131,10 @@ jobs:
               'xdpyinfo',
               'xfce-session.log',
               'private fun ensureKaliGlycinAndroidCompatibility(rootfs: File): Boolean',
+              'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
+              'glycin-proot-compat-v1',
+              'xfce-support-v1',
+              'desktop-experience-v4',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -145,7 +149,7 @@ jobs:
               'private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String',
               'has_live_process()',
               'has_viewable_window()',
-              'GIO_USE_VFS=local GIO_USE_VOLUME_MONITOR=unix GVFS_DISABLE_FUSE=1',
+              'GIO_USE_VFS=gvfs GIO_USE_VOLUME_MONITOR=unix',
               'dbus-run-session',
               'install -d -m 1777 /tmp/.ICE-unix',
               '_NET_SUPPORTING_WM_CHECK',
@@ -192,7 +196,8 @@ jobs:
               'installFileManagerDefaults(homeDir)',
               'FileManager=Thunar',
               'inode/directory=thunar.desktop;',
-              'TryExec=${exec.substringBefore(\' \')}',
+              'TryExec=${exec.substringBefore(\' \')}', 
+              'droiddesk-browser %U',
               'exec = "/usr/bin/thunar %u"',
               '<property name="style" type="int" value="2"/>',
               '<property name="show-home" type="bool" value="true"/>',
@@ -424,11 +429,11 @@ jobs:
               missing.append('Kali install must start the DroidDesk foreground service')
           if 'linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = timeoutSeconds)' not in desktop_activity:
               missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs after session recovery')
-          if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
+          if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.19+36' not in pubspec:
-              missing.append('version: 1.4.19+36')
+          if 'version: 1.4.20+37' not in pubspec:
+              missing.append('version: 1.4.20+37')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -456,8 +461,18 @@ jobs:
               missing.append('disable expensive Thunar thumbnails for mobile performance')
           if 'name="use_compositing"' not in desktop_experience_script or 'false("/>)#\\1true\\2' not in desktop_experience_script:
               missing.append('enable XFCE compositing so the transparent dock is not rendered black')
-          if 'desktop-experience-v3' not in desktop_experience_script or 'desktop-experience-v3' not in runtime:
-              missing.append('use the same v3 desktop migration marker in the script and runtime')
+          if 'background-style" type="uint" value="1"' not in desktop_experience_script:
+              missing.append('set the dock panel to transparent RGBA style')
+          if 'desktop-experience-v4' not in desktop_experience_script or 'desktop-experience-v4' not in runtime:
+              missing.append('use the same v4 desktop migration marker in the script and runtime')
+          if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
+              missing.append('install the official Google Chrome ARM64 fallback')
+          if 'droiddesk-browser.desktop' not in desktop_experience_script or 'droiddesk-browser' not in profile:
+              missing.append('install the direct browser helper')
+          if 'GIO_USE_VFS=gvfs' not in runtime:
+              missing.append('enable GVFS for Trash')
+          if 'media.av1.enabled", false' not in desktop_experience_script:
+              missing.append('disable unsupported AV1 in Firefox for YouTube fallback')
           if 'name="image-path"' not in desktop_experience_script:
               missing.append('expose Kali wallpaper directory in XFCE Desktop Settings')
 
@@ -641,7 +656,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.19-arm64
+          name: Kali-Linux-1.4.20-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

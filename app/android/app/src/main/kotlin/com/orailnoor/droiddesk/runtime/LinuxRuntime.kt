@@ -72,6 +72,8 @@ class LinuxRuntime(private val context: Context) {
         @Volatile private var sessionProcess: Process? = null
         @Volatile private var dbusProcess: Process? = null
         @Volatile private var pulseProcess: Process? = null
+        private val kaliDesktopMigrationLock = Any()
+        @Volatile private var kaliDesktopMigrationRunning = false
     }
 
     @Volatile private var activeCommandProcess: Process? = null
@@ -467,6 +469,8 @@ class LinuxRuntime(private val context: Context) {
      * with that supported mode before XFCE is launched.
      */
     private fun ensureKaliGlycinAndroidCompatibility(rootfs: File): Boolean {
+        val marker = File(rootfs, "root/.droiddesk/glycin-proot-compat-v1")
+        if (marker.isFile) return true
         val minimumVersion = "2.2.2+ds-1"
         val script = """
             set -Eeuo pipefail
@@ -600,6 +604,8 @@ class LinuxRuntime(private val context: Context) {
 
         File(rootfs, "home/kali/.cache/glycin").deleteRecursively()
         File(rootfs, "root/.cache/glycin").deleteRecursively()
+        marker.parentFile?.mkdirs()
+        marker.writeText("ok\n")
         lastKaliDesktopDiagnostic = ""
         Log.i(TAG, "Kali GdkPixbuf PNG/SVG tests passed with Glycin sandbox disabled")
         return true
@@ -610,6 +616,8 @@ class LinuxRuntime(private val context: Context) {
      * reinstall Kali or remove user files, downloaded files, or installed tools.
      */
     private fun repairKaliDesktopSupport(rootfs: File): Boolean {
+        val marker = File(rootfs, "root/.droiddesk/xfce-support-v1")
+        if (marker.isFile) return true
         val script = """
             set -Eeuo pipefail
             export DEBIAN_FRONTEND=noninteractive
@@ -674,6 +682,8 @@ class LinuxRuntime(private val context: Context) {
             Log.e(TAG, lastKaliDesktopDiagnostic)
             return false
         }
+        marker.parentFile?.mkdirs()
+        marker.writeText("ok\n")
         return true
     }
 
@@ -852,7 +862,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v3")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v4")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -892,7 +902,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v3").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v4").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -900,47 +910,97 @@ class LinuxRuntime(private val context: Context) {
         }
     }
 
+    /**
+     * Repair packages and migrate the desktop only after XFCE is visible.
+     * A process-wide lock prevents duplicate APT transactions on activity resume.
+     */
+    fun scheduleKaliDesktopExperienceMigration(rootfs: File) {
+        synchronized(kaliDesktopMigrationLock) {
+            if (kaliDesktopMigrationRunning) return
+            kaliDesktopMigrationRunning = true
+        }
+        Thread({
+            try {
+                if (!repairKaliDesktopSupport(rootfs)) {
+                    Log.w(TAG, "Kali post-launch GTK/D-Bus repair did not complete")
+                }
+                if (!ensureKaliGlycinAndroidCompatibility(rootfs)) {
+                    Log.w(TAG, "Kali post-launch Glycin repair did not complete")
+                }
+                if (ensureKaliDesktopExperience(rootfs)) {
+                    applyKaliDesktopSettingsToRunningSession(rootfs)
+                } else {
+                    Log.w(TAG, "Kali post-launch desktop migration did not complete")
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "Kali post-launch desktop migration failed", error)
+            } finally {
+                synchronized(kaliDesktopMigrationLock) {
+                    kaliDesktopMigrationRunning = false
+                }
+            }
+        }, "KaliDesktopPostLaunchRepair").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun applyKaliDesktopSettingsToRunningSession(rootfs: File) {
+        val addressFile = File(rootfs, "home/kali/.local/share/droiddesk/dbus-session-address")
+        val address = runCatching { addressFile.readText().trim() }.getOrDefault("")
+        if (address.isBlank()) {
+            Log.w(TAG, "XFCE D-Bus address was not saved; settings will refresh next launch")
+            return
+        }
+        val refreshScript = """
+            set +e
+            export DISPLAY=:0 HOME=/home/kali XDG_RUNTIME_DIR=/tmp/runtime-kali
+            xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorbuiltin/image-path --set '/usr/share/xfce4/backdrops/Kali Linux'
+            xfconf-query -c xfce4-desktop -p /desktop-icons/file-icons/show-trash --set true
+            xfconf-query -c xfwm4 -p /general/use_compositing --set true
+            xfconf-query -c xfce4-panel -p /panels/panel-2/background-style --set 1
+            xfconf-query -c xfce4-panel -p /panels/panel-2/background-rgba -t double -t double -t double -t double -s 0.965 -s 0.961 -s 0.957 -s 0
+            xfdesktop --reload
+            xfce4-panel -r
+            echo '[Kali Linux] Wallpaper, Trash and transparent dock refreshed.'
+        """.trimIndent()
+        val guestCommand = listOf(
+            "/usr/bin/env", "-i",
+            "HOME=/home/kali", "USER=kali", "LOGNAME=kali",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG=C.UTF-8", "TERM=xterm-256color", "DISPLAY=:0",
+            "XDG_RUNTIME_DIR=/tmp/runtime-kali", "DBUS_SESSION_BUS_ADDRESS=$address",
+            "/usr/bin/sudo", "-E", "-u", "kali", "/bin/bash", "-c", refreshScript,
+        )
+        val result = runKaliProotCommand(
+            rootfs = rootfs,
+            workingDirectory = "/home/kali",
+            guestCommand = guestCommand,
+            timeoutMinutes = 1,
+            onOutput = { line -> Log.i(TAG, line.trimEnd()) },
+        )
+        if (result.exitCode != 0) {
+            Log.w(TAG, "Could not apply live XFCE settings: ${result.output.takeLast(1200)}")
+        }
+    }
+
+
     /** Start Kali XFCE through PRoot and DroidDesk's existing X11/audio services. */
     fun startProotKaliSession(rootfs: File, desktopEnv: String = "xfce4") {
         require(desktopEnv == "xfce4") { "Only XFCE is configured for rootless Kali" }
         if (!isKaliProotDesktopInstalled(rootfs)) {
             throw IllegalStateException("Kali XFCE is not installed inside DroidDesk")
         }
-        if (!repairKaliDesktopSupport(rootfs)) {
-            throw IllegalStateException(lastKaliDesktopDiagnostic.ifBlank {
-                "Kali's GTK, MIME or D-Bus desktop support could not be repaired."
-            })
-        }
-        if (!ensureKaliGlycinAndroidCompatibility(rootfs)) {
-            throw IllegalStateException(lastKaliDesktopDiagnostic.ifBlank {
-                "Kali's GTK image-loader compatibility repair could not be completed."
-            })
-        }
+        // GTK/Glycin package repair and desktop migration run after the desktop
+        // is visible, rather than extending the initial loading screen.
 
-        // Apply a one-time compatibility migration to an existing Kali rootfs.
-        // This adds official Kali backgrounds, GVFS Trash support and PulseAudio
-        // client utilities without deleting or reinstalling the user's Kali files.
-        val experienceMarker = File(rootfs, "root/.droiddesk/desktop-experience-v3")
-        val experienceNeedsRefresh = !experienceMarker.isFile
-        val experienceReady = ensureKaliDesktopExperience(rootfs)
-        if (!experienceReady) {
-            Log.w(TAG, "Kali desktop experience migration did not complete; the desktop will still start")
-        }
-        val mustRefreshDesktop = experienceNeedsRefresh && experienceReady
-
-        // Android may restart and lose the PRoot Process handle while guest XFCE survives.
-        // Reuse only a visually verified desktop; otherwise clean stale processes even if
-        // sessionProcess is null, then launch a clean XFCE session.
-        if (!mustRefreshDesktop && isKaliDesktopProcessSetReady(rootfs)) {
+        // Keep the foreground startup path lightweight. Package repair and the
+        // first-run migration are deferred until XFCE is visibly ready.
+        if (isKaliDesktopProcessSetReady(rootfs)) {
             Log.i(TAG, "Kali XFCE session is visually healthy; reusing the existing desktop")
             return
         }
-
-        if (mustRefreshDesktop) {
-            Log.i(TAG, "Refreshing the running Kali desktop once to activate the new wallpapers, GVFS Trash and audio defaults")
-        } else {
-            Log.w(TAG, "Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart")
-        }
+        Log.w(TAG, "Kali XFCE is not visually ready; cleaning stale session components before restart")
         stopKaliDesktopProcesses(rootfs)
         sessionProcess?.let { stale ->
             runCatching { stale.destroy() }
@@ -1020,7 +1080,7 @@ class LinuxRuntime(private val context: Context) {
             "export XDG_DATA_HOME=/home/kali/.local/share XDG_DATA_DIRS=/usr/local/share:/usr/share",
             "export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce XDG_SESSION_TYPE=x11",
             "export NO_AT_BRIDGE=1 GTK_A11Y=none GTK_USE_PORTAL=0 GDK_BACKEND=x11",
-            "export GIO_USE_VFS=local GIO_USE_VOLUME_MONITOR=unix GVFS_DISABLE_FUSE=1",
+            "export GIO_USE_VFS=gvfs GIO_USE_VOLUME_MONITOR=unix",
             "export GLYCIN_DISABLE_SANDBOX=i-know-the-risks",
             "rm -rf /tmp/runtime-kali",
             "install -d -m 0700 /tmp/runtime-kali",
@@ -1039,9 +1099,9 @@ class LinuxRuntime(private val context: Context) {
             "echo \"[Kali Linux] Starting XFCE with private D-Bus, audio and local GIO VFS...\"",
             "cd /home/kali",
             "if [ -x /usr/bin/dbus-run-session ]; then",
-            "  exec /usr/bin/dbus-run-session -- /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
+            "  exec /usr/bin/dbus-run-session -- /bin/bash -c 'printf \"%s\" \"$DBUS_SESSION_BUS_ADDRESS\" > /home/kali/.local/share/droiddesk/dbus-session-address; chmod 0600 /home/kali/.local/share/droiddesk/dbus-session-address; exec /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1'",
             "else",
-            "  exec /usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
+            "  exec /usr/bin/dbus-launch --exit-with-session /bin/bash -c 'printf \"%s\" \"$DBUS_SESSION_BUS_ADDRESS\" > /home/kali/.local/share/droiddesk/dbus-session-address; chmod 0600 /home/kali/.local/share/droiddesk/dbus-session-address; exec /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1'",
             "fi",
         ).joinToString("\n")
         val guestCommand = listOf(

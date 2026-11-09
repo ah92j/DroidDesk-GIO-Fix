@@ -140,7 +140,7 @@ class DesktopActivity : Activity() {
         desktopEnv = intent.getStringExtra("de") ?: "xfce4"
         estimatedLoadingSeconds = when {
             !shouldStartSession -> 10
-            sessionMode == "proot-kali" -> 45
+            sessionMode == "proot-kali" -> 65
             else -> 30
         }
 
@@ -219,7 +219,7 @@ class DesktopActivity : Activity() {
             bringToFront()
         }
         logoAnimator?.start()
-        estimatedLoadingSeconds = if (sessionMode == "proot-kali") 45 else 30
+        estimatedLoadingSeconds = if (sessionMode == "proot-kali") 65 else 30
         loadingStartedAt = android.os.SystemClock.elapsedRealtime()
         loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
         loadingMessageHandler.postDelayed(loadingEstimateTicker, 1_000)
@@ -693,6 +693,7 @@ class DesktopActivity : Activity() {
                 linuxRuntime.startProotKaliSession(rootfs, desktopEnv)
                 if (linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = timeoutSeconds)) {
                     lastDesktopStartupError = null
+                    linuxRuntime.scheduleKaliDesktopExperienceMigration(rootfs)
                     return true
                 }
                 Log.w(
@@ -715,7 +716,10 @@ class DesktopActivity : Activity() {
                 "chroot" -> chrootRuntime.waitForDesktopReady(desktopEnv)
                 "proot-kali" -> {
                     val rootfs = File(filesDir, "rootfs")
-                    if (linuxRuntime.isKaliDesktopProcessSetReady(rootfs)) true else startKaliDesktopWithRecovery()
+                    if (linuxRuntime.isKaliDesktopProcessSetReady(rootfs)) {
+                        linuxRuntime.scheduleKaliDesktopExperienceMigration(rootfs)
+                        true
+                    } else startKaliDesktopWithRecovery()
                 }
                 else -> linuxRuntime.waitForDesktopReady(desktopEnv)
             }
