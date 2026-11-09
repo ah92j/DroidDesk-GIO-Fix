@@ -7,14 +7,14 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v6"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v7"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
   kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
   ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
-  gdebi zenity desktop-file-utils xdg-utils curl gnupg
+  gdebi zenity desktop-file-utils xdg-utils curl gnupg file
 )
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -22,7 +22,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v6" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v7" ]]
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -205,11 +205,15 @@ pref("media.ffvpx.enabled", true);
 pref("media.av1.enabled", false);
 pref("media.ffmpeg.vaapi.enabled", false);
 pref("media.hardware-video-decoding.enabled", false);
-pref("media.rdd-process.enabled", true);
 pref("media.mediasource.enabled", true);
 pref("media.mediasource.webm.enabled", true);
+pref("media.mediasource.webm.audio.enabled", true);
+pref("media.mediasource.webm.video.enabled", true);
 pref("media.mediasource.vp9.enabled", true);
 pref("media.mediasource.mp4.enabled", true);
+pref("media.mediasource.mp4.audio.enabled", true);
+pref("media.mediasource.mp4.video.enabled", true);
+pref("media.webm.enabled", true);
 FIREFOX_PREFS
     chmod 0644 "$pref_dir/droiddesk-media.js"
   fi
@@ -236,8 +240,13 @@ user_pref("media.rdd-process.enabled", true);
 pref("media.rdd-process.enabled", true);
 user_pref("media.mediasource.enabled", true);
 user_pref("media.mediasource.webm.enabled", true);
+user_pref("media.mediasource.webm.audio.enabled", true);
+user_pref("media.mediasource.webm.video.enabled", true);
 user_pref("media.mediasource.vp9.enabled", true);
 user_pref("media.mediasource.mp4.enabled", true);
+user_pref("media.mediasource.mp4.audio.enabled", true);
+user_pref("media.mediasource.mp4.video.enabled", true);
+user_pref("media.webm.enabled", true);
 FIREFOX_USER_PREFS
   done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
 fi
@@ -385,6 +394,10 @@ Download the ARM64 build of this application."
     fi
 
     echo "[DroidDesk Installer] Installing $deb_name ($deb_arch) from $file"
+    echo "[DroidDesk Installer] Package control metadata:"
+    dpkg-deb -f "$file" Package Version Architecture Depends 2>&1 || true
+    echo "[DroidDesk Installer] Simulating dependency resolution before installation:"
+    sudo -n apt-get -s install "$file" 2>&1 || true
     # Refresh package indexes, then let APT resolve the local package and
     # all dependencies from the configured Kali repositories.
     if ! sudo -n apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 update; then
@@ -417,6 +430,14 @@ APT could not resolve or configure all dependencies."
     fi
     ;;
   *.appimage)
+    app_arch="$(file -b "$file" 2>/dev/null || true)"
+    echo "[DroidDesk Installer] AppImage file type: $app_arch"
+    if ! printf '%s' "$app_arch" | grep -Eqi 'ARM aarch64|ARM64|AArch64'; then
+      show_failure "This AppImage is not identified as ARM64/AArch64.
+Detected file type: $app_arch
+This Kali environment is ARM64. Download the ARM64 AppImage, not x86_64/AMD64."
+      exit 3
+    fi
     install -d "$HOME/Applications" "$HOME/.local/share/applications" "$HOME/Desktop"
     safe_file="$(basename "$file" | tr -cs '[:alnum:]._-' '_')"
     target="$HOME/Applications/$safe_file"
