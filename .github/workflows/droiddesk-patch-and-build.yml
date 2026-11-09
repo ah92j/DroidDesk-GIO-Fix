@@ -129,6 +129,7 @@ jobs:
               'has_live_process()',
               'has_viewable_window()',
               '_NET_SUPPORTING_WM_CHECK',
+              'XFCE_DESKTOP_WINDOW',
               'Map State: IsViewable',
               'XFCE is visually ready',
               'Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart',
