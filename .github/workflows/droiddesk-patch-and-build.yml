@@ -197,6 +197,672 @@ jobs:
           missing.extend(item for item in required_updater if item not in updater)
           if 'KaliInstallCoordinator.tryStart()' not in runtime or 'KaliInstallCoordinator.finish(succeeded)' not in runtime:
               missing.append('Kali install single-operation guard')
+          escaped_shell_name = 'pkill -TERM -u kali -x "${' + "'
+          if 'fun snapshot()' not in kali_coordinator or 'private var running = false' not in kali_coordinator:
+              missing.append('Kali install process state')
+          if 'getKaliInstallStatus' not in platform_bridge or "'getKaliInstallStatus'" not in platform_bridge:
+              missing.append('Flutter bridge for Kali install state')
+          if 'DroidDeskPlatform.getKaliInstallStatus()' not in app_state or "runtimeStatus['distro'] == 'kali-proot'" not in app_state:
+              missing.append('Flutter resume/complete detection for Kali setup')
+          if '@Test' not in kali_coordinator_tests or 'preventsASecondInstallWhileTheFirstOneIsRunning' not in kali_coordinator_tests:
+              missing.append('Kali concurrent install prevention unit test')
+          if 'KaliProotCommandLine.build(' not in runtime:
+              missing.append('Kali PRoot command builder integration')
+          if 'fun build(' not in proot_builder or 'addAll(guestCommand)' not in proot_builder:
+              missing.append('Kali PRoot command builder implementation')
+          if 'workingDirectory, "--"' in runtime or '-w /home/kali --' in runtime:
+              missing.append('unsupported -- delimiter in a Kali PRoot launch path')
+          if '@Test' not in proot_tests or 'assertFalse(command.contains("--"))' not in proot_tests:
+              missing.append('Kali PRoot argument separator regression test')
+          required_archive_manager = [
+              'RootfsArchiveSanitizer.sanitize(',
+              'stripTopLevelDirectory = if (distro == "kali") "kali-arm64" else null',
+              'MAX_EXPANDED_ARCHIVE_BYTES',
+              'sanitizedArchive?.let',
+          ]
+          required_archive_sanitizer = [
+              'TarArchiveInputStream(decoded, "UTF-8")',
+              'XZInputStream(rawInput)',
+              'TarConstants.LF_SYMLINK',
+              'ArchivePathValidator.relativeSymlinkTarget(',
+              'stripTopLevelDirectory: String? = null',
+              'ArchivePathValidator.stripExpectedArchiveRoot(archiveEntryName, expectedRoot)',
+              'ArchivePathValidator.validateSymbolicLinkTarget(',
+              'sourceEntry.isCharacterDevice',
+              'sourceEntry.isFIFO',
+              'maxExpandedBytes',
+          ]
+          required_archive_validator = [
+              'fun normalizeEntryName(',
+              'fun stripExpectedArchiveRoot(',
+              'fun stripExpectedArchiveRootFromHardLink(',
+              'fun validateSymbolicLinkTarget(',
+              'MAX_COMPONENT_BYTES',
+              'MAX_PATH_BYTES',
+          ]
+          missing.extend(item for item in required_archive_manager if item not in rootfs_manager)
+          missing.extend(item for item in required_archive_sanitizer if item not in archive_sanitizer)
+          missing.extend(item for item in required_archive_validator if item not in archive_validator)
+          if '@Test' not in archive_tests or 'rejectsTraversalThatWouldEscapeTheRoot' not in archive_tests:
+              missing.append('archive path validator unit tests')
+          if 'rewritesGuestAbsoluteSymlinkAsRelativeLink' not in archive_tests:
+              missing.append('absolute guest symlink unit test')
+          if 'acceptsSystemdEscapedUnitNamesContainingBackslashes' not in archive_tests:
+              missing.append('systemd escaped filename unit test')
+          if 'stripsKaliArchiveRootAndRejectsMembersOutsideIt' not in archive_tests:
+              missing.append('Kali archive root normalization unit test')
+          if 'stripsKaliArchiveFolderAndPreservesSystemdEscapedFilename' not in sanitizer_tests:
+              missing.append('Kali root archive sanitizer integration test')
+          if 'rejectsKaliArchiveMembersOutsideTheExpectedRoot' not in sanitizer_tests:
+              missing.append('Kali archive root isolation integration test')
+          if 'rewritesKaliHardlinksAsRelativeSymlinksForAndroidExtraction' not in sanitizer_tests:
+              missing.append('Kali hardlink-to-symlink integration test')
+          if 'convertsArchiveHardlinkTargetToSafeRelativeSymlinkPath' not in archive_tests:
+              missing.append('rootfs hardlink relative-target unit test')
+          if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
+              missing.append('org.tukaani:xz:1.12 dependency')
+          if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
+              missing.append('Apache Commons Compress 1.28.0 dependency')
+
+          required_kali_runtime = [
+              'minimumFreeBytes = 15L * 1024L * 1024L * 1024L',
+              'File(rootfs, ".kali_default_tools_installed")',
+              'context.assets.open("droiddesk/kali/setup-kali-default.sh")',
+              '240, onLog',
+          ]
+          required_kali_script = [
+              'apt-get "${APT_OPTIONS[@]}" update',
+              'kali-linux-default',
+              'xfce4',
+              'DEBIAN_FRONTEND=noninteractive',
+              "dpkg-query -W -f='${Status}' kali-linux-default",
+              'https://kali.download/kali/',
+              'https://archive.kali.org/kali/',
+              'Acquire::ForceIPv4=true',
+              'Acquire::https::Verify-Peer=true',
+              'Acquire::https::Verify-Host=true',
+              'Acquire::Retries=3',
+              'BASH_ENV=/dev/null',
+              'APT::Keep-Downloaded-Packages=true',
+              'run_with_package_heartbeat',
+              'policy-rc.d',
+              'recover_optional_stalled_theme',
+              'adwaita-icon-theme',
+              'thunar',
+              'exo-utils',
+              "dpkg-query -W -f='${Status}' thunar",
+              'test -x /usr/bin/thunar',
+              'test -x /usr/bin/exo-open',
+              'URIs: $repository_uri',
+              '/var/cache/apt/archives/partial',
+              '/var/lib/apt/lists/partial',
+              'dpkg --configure -a',
+              '--fix-broken install',
+              'apt-sources-original',
+              '--self-test',
+          ]
+          missing.extend(item for item in required_kali_runtime if item not in runtime)
+          missing.extend(item for item in required_kali_script if item not in kali_setup_script)
+
+          if 'KALI_CDN' in kali_setup_script or 'KALI_REDIRECTOR' in kali_setup_script:
+              missing.append('no stale Kali repository variable references')
+          if 'http://' in kali_setup_script:
+              missing.append('HTTPS-only Kali APT source configuration')
+          if 'stty' in kali_setup_script:
+              missing.append('no terminal ioctl calls in non-interactive APT script')
+          if kali_setup_script.count('run_apt_transaction() {') != 1:
+              missing.append('exactly one Kali APT transaction implementation')
+          if kali_setup_script.count('Package installation and verification completed.') != 1:
+              missing.append('exactly one clean Kali setup script body')
+
+          kali_install_start = runtime.find('fun installKaliProotDesktop(')
+          kali_install_end = runtime.find('private fun configureKaliDns(', kali_install_start)
+          kali_install_method = runtime[kali_install_start:kali_install_end]
+          if '"/bin/bash", "-lc"' in kali_install_method:
+              missing.append('Kali install commands must not load interactive login startup files')
+          if kali_install_method.count('"/bin/bash", "-c"') != 3:
+              missing.append('all three Kali install/check commands use non-login bash -c')
+          if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
+              missing.append('Kali install must start the DroidDesk foreground service')
+          if 'waitForKaliDesktopReady(File(filesDir, "rootfs"))' not in desktop_activity:
+              missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs')
+          if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
+              missing.append('Kali desktop readiness timeout estimate')
+
+          if 'version: 1.4.10+26' not in pubspec:
+              missing.append('version: 1.4.10+26')
+          if 'clear_stale_apt_indexes' in kali_setup_script:
+              missing.append('preserve APT package indexes between resumable installer attempts')
+          if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
+              missing.append('retain completed APT archives across installer retries')
+          if 'run_with_package_heartbeat' not in kali_setup_script:
+              missing.append('emit dpkg package-configuration heartbeats')
+          if 'policy-rc.d' not in kali_setup_script:
+              missing.append('prevent service startup inside PRoot during package configuration')
+          if 'recover_optional_stalled_theme' not in kali_setup_script:
+              missing.append('recover an incomplete optional Papirus package before dpkg resumes')
+          apt_packages_start = kali_setup_script.find('APT_PACKAGES=(')
+          apt_packages_end = kali_setup_script.find(')', apt_packages_start)
+          apt_package_list = kali_setup_script[apt_packages_start:apt_packages_end]
+          if 'papirus-icon-theme' in apt_package_list:
+              missing.append('keep optional Papirus icon cache generation out of the core Kali install')
+
+          if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
+              missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
+
+          if missing:
+              raise SystemExit(
+                  'Missing expected committed source changes: ' + '; '.join(missing)
+              )
+
+          print('Android AudioTrack pipe, PulseAudio sink routing, GIO, chroot mounts, distro status, updater security, permissions, XFCE and version checks passed.')
+          PY
+
+      - name: Validate Kali APT setup script syntax and configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh"
+          bash -n "$SCRIPT"
+          bash "$SCRIPT" --self-test
+          ! grep -Fq 'KALI_CDN' "$SCRIPT"
+          ! grep -Fq 'KALI_REDIRECTOR' "$SCRIPT"
+          ! grep -Fq 'http://' "$SCRIPT"
+          ! grep -Fq 'stty' "$SCRIPT"
+          test "$(grep -Fc 'run_apt_transaction() {' "$SCRIPT")" -eq 1
+          test "$(grep -Fc 'Package installation and verification completed.' "$SCRIPT")" -eq 1
+
+      - name: Validate non-interactive Kali installer shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+          ).read_text()
+          start = source.index('fun installKaliProotDesktop(')
+          end = source.index('private fun configureKaliDns(', start)
+          method = source[start:end]
+          assert '"/bin/bash", "-lc"' not in method
+          assert method.count('"/bin/bash", "-c"') == 3
+          print('Kali setup uses non-login, non-interactive Bash for preflight, APT and verification.')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Gradle 8.14
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
+
+      - name: Install Android CMake and Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "cmake;3.22.1" "build-tools;35.0.0"
+          FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
+
+      - name: Configure permanent release signing
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_BASE64: ${{ secrets.DROIDDESK_KEYSTORE_BASE64 }}
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          : "${DROIDDESK_KEYSTORE_BASE64:?Missing DROIDDESK_KEYSTORE_BASE64 secret}"
+          : "${DROIDDESK_KEYSTORE_PASSWORD:?Missing DROIDDESK_KEYSTORE_PASSWORD secret}"
+          : "${DROIDDESK_KEY_ALIAS:?Missing DROIDDESK_KEY_ALIAS secret}"
+          : "${DROIDDESK_KEY_PASSWORD:?Missing DROIDDESK_KEY_PASSWORD secret}"
+
+          KEYSTORE_PATH="$RUNNER_TEMP/droiddesk-release.jks"
+
+          printf '%s' "$DROIDDESK_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+
+          chmod 600 "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$DROIDDESK_KEYSTORE_PASSWORD" \
+            -alias "$DROIDDESK_KEY_ALIAS" >/dev/null
+
+          echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+          echo "Permanent release keystore loaded and alias validated."
+
+      - name: Generate Gradle wrapper
+        working-directory: app/android
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: gradle wrapper --gradle-version 8.14 --distribution-type bin --no-validate-url
+
+      - name: Resolve Flutter packages
+        working-directory: app
+        run: flutter pub get
+
+      - name: Run rootfs archive path safety tests
+        working-directory: app/android
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Build ARM64 release APK
+        working-directory: app
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          flutter build apk --release --target-platform android-arm64
+          test -s build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Verify permanent APK signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="app/build/app/outputs/flutter-apk/app-release.apk"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK_ROOT" ]; then
+            echo "Android SDK path is not configured."
+            exit 1
+          fi
+
+          APKSIGNER="$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+
+          if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+            echo "apksigner was not found in Android build-tools."
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+
+          ACTUAL_SHA256="$(sed -n 's/.*certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+
+          EXPECTED_SHA256="e8ba3273fa8e3ca05db4f13b2c58b9c539808c84c71721a293c6dbad4fe80656"
+
+          if [ -z "$ACTUAL_SHA256" ] || [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: APK signing certificate mismatch."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   ${ACTUAL_SHA256:-not found}"
+            exit 1
+          fi
+
+          echo "APK certificate matches the permanent DroidDesk release key."
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidDesk-1.4.10-arm64
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+}name" + '"'
+          escaped_shell_name_kill = 'pkill -KILL -u kali -x "${' + "'
+          if 'fun snapshot()' not in kali_coordinator or 'private var running = false' not in kali_coordinator:
+              missing.append('Kali install process state')
+          if 'getKaliInstallStatus' not in platform_bridge or "'getKaliInstallStatus'" not in platform_bridge:
+              missing.append('Flutter bridge for Kali install state')
+          if 'DroidDeskPlatform.getKaliInstallStatus()' not in app_state or "runtimeStatus['distro'] == 'kali-proot'" not in app_state:
+              missing.append('Flutter resume/complete detection for Kali setup')
+          if '@Test' not in kali_coordinator_tests or 'preventsASecondInstallWhileTheFirstOneIsRunning' not in kali_coordinator_tests:
+              missing.append('Kali concurrent install prevention unit test')
+          if 'KaliProotCommandLine.build(' not in runtime:
+              missing.append('Kali PRoot command builder integration')
+          if 'fun build(' not in proot_builder or 'addAll(guestCommand)' not in proot_builder:
+              missing.append('Kali PRoot command builder implementation')
+          if 'workingDirectory, "--"' in runtime or '-w /home/kali --' in runtime:
+              missing.append('unsupported -- delimiter in a Kali PRoot launch path')
+          if '@Test' not in proot_tests or 'assertFalse(command.contains("--"))' not in proot_tests:
+              missing.append('Kali PRoot argument separator regression test')
+          required_archive_manager = [
+              'RootfsArchiveSanitizer.sanitize(',
+              'stripTopLevelDirectory = if (distro == "kali") "kali-arm64" else null',
+              'MAX_EXPANDED_ARCHIVE_BYTES',
+              'sanitizedArchive?.let',
+          ]
+          required_archive_sanitizer = [
+              'TarArchiveInputStream(decoded, "UTF-8")',
+              'XZInputStream(rawInput)',
+              'TarConstants.LF_SYMLINK',
+              'ArchivePathValidator.relativeSymlinkTarget(',
+              'stripTopLevelDirectory: String? = null',
+              'ArchivePathValidator.stripExpectedArchiveRoot(archiveEntryName, expectedRoot)',
+              'ArchivePathValidator.validateSymbolicLinkTarget(',
+              'sourceEntry.isCharacterDevice',
+              'sourceEntry.isFIFO',
+              'maxExpandedBytes',
+          ]
+          required_archive_validator = [
+              'fun normalizeEntryName(',
+              'fun stripExpectedArchiveRoot(',
+              'fun stripExpectedArchiveRootFromHardLink(',
+              'fun validateSymbolicLinkTarget(',
+              'MAX_COMPONENT_BYTES',
+              'MAX_PATH_BYTES',
+          ]
+          missing.extend(item for item in required_archive_manager if item not in rootfs_manager)
+          missing.extend(item for item in required_archive_sanitizer if item not in archive_sanitizer)
+          missing.extend(item for item in required_archive_validator if item not in archive_validator)
+          if '@Test' not in archive_tests or 'rejectsTraversalThatWouldEscapeTheRoot' not in archive_tests:
+              missing.append('archive path validator unit tests')
+          if 'rewritesGuestAbsoluteSymlinkAsRelativeLink' not in archive_tests:
+              missing.append('absolute guest symlink unit test')
+          if 'acceptsSystemdEscapedUnitNamesContainingBackslashes' not in archive_tests:
+              missing.append('systemd escaped filename unit test')
+          if 'stripsKaliArchiveRootAndRejectsMembersOutsideIt' not in archive_tests:
+              missing.append('Kali archive root normalization unit test')
+          if 'stripsKaliArchiveFolderAndPreservesSystemdEscapedFilename' not in sanitizer_tests:
+              missing.append('Kali root archive sanitizer integration test')
+          if 'rejectsKaliArchiveMembersOutsideTheExpectedRoot' not in sanitizer_tests:
+              missing.append('Kali archive root isolation integration test')
+          if 'rewritesKaliHardlinksAsRelativeSymlinksForAndroidExtraction' not in sanitizer_tests:
+              missing.append('Kali hardlink-to-symlink integration test')
+          if 'convertsArchiveHardlinkTargetToSafeRelativeSymlinkPath' not in archive_tests:
+              missing.append('rootfs hardlink relative-target unit test')
+          if 'implementation("org.tukaani:xz:1.12")' not in gradle_app:
+              missing.append('org.tukaani:xz:1.12 dependency')
+          if 'implementation("org.apache.commons:commons-compress:1.28.0")' not in gradle_app:
+              missing.append('Apache Commons Compress 1.28.0 dependency')
+
+          required_kali_runtime = [
+              'minimumFreeBytes = 15L * 1024L * 1024L * 1024L',
+              'File(rootfs, ".kali_default_tools_installed")',
+              'context.assets.open("droiddesk/kali/setup-kali-default.sh")',
+              '240, onLog',
+          ]
+          required_kali_script = [
+              'apt-get "${APT_OPTIONS[@]}" update',
+              'kali-linux-default',
+              'xfce4',
+              'DEBIAN_FRONTEND=noninteractive',
+              "dpkg-query -W -f='${Status}' kali-linux-default",
+              'https://kali.download/kali/',
+              'https://archive.kali.org/kali/',
+              'Acquire::ForceIPv4=true',
+              'Acquire::https::Verify-Peer=true',
+              'Acquire::https::Verify-Host=true',
+              'Acquire::Retries=3',
+              'BASH_ENV=/dev/null',
+              'APT::Keep-Downloaded-Packages=true',
+              'run_with_package_heartbeat',
+              'policy-rc.d',
+              'recover_optional_stalled_theme',
+              'adwaita-icon-theme',
+              'thunar',
+              'exo-utils',
+              "dpkg-query -W -f='${Status}' thunar",
+              'test -x /usr/bin/thunar',
+              'test -x /usr/bin/exo-open',
+              'URIs: $repository_uri',
+              '/var/cache/apt/archives/partial',
+              '/var/lib/apt/lists/partial',
+              'dpkg --configure -a',
+              '--fix-broken install',
+              'apt-sources-original',
+              '--self-test',
+          ]
+          missing.extend(item for item in required_kali_runtime if item not in runtime)
+          missing.extend(item for item in required_kali_script if item not in kali_setup_script)
+
+          if 'KALI_CDN' in kali_setup_script or 'KALI_REDIRECTOR' in kali_setup_script:
+              missing.append('no stale Kali repository variable references')
+          if 'http://' in kali_setup_script:
+              missing.append('HTTPS-only Kali APT source configuration')
+          if 'stty' in kali_setup_script:
+              missing.append('no terminal ioctl calls in non-interactive APT script')
+          if kali_setup_script.count('run_apt_transaction() {') != 1:
+              missing.append('exactly one Kali APT transaction implementation')
+          if kali_setup_script.count('Package installation and verification completed.') != 1:
+              missing.append('exactly one clean Kali setup script body')
+
+          kali_install_start = runtime.find('fun installKaliProotDesktop(')
+          kali_install_end = runtime.find('private fun configureKaliDns(', kali_install_start)
+          kali_install_method = runtime[kali_install_start:kali_install_end]
+          if '"/bin/bash", "-lc"' in kali_install_method:
+              missing.append('Kali install commands must not load interactive login startup files')
+          if kali_install_method.count('"/bin/bash", "-c"') != 3:
+              missing.append('all three Kali install/check commands use non-login bash -c')
+          if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
+              missing.append('Kali install must start the DroidDesk foreground service')
+          if 'waitForKaliDesktopReady(File(filesDir, "rootfs"))' not in desktop_activity:
+              missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs')
+          if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
+              missing.append('Kali desktop readiness timeout estimate')
+
+          if 'version: 1.4.10+26' not in pubspec:
+              missing.append('version: 1.4.10+26')
+          if 'clear_stale_apt_indexes' in kali_setup_script:
+              missing.append('preserve APT package indexes between resumable installer attempts')
+          if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
+              missing.append('retain completed APT archives across installer retries')
+          if 'run_with_package_heartbeat' not in kali_setup_script:
+              missing.append('emit dpkg package-configuration heartbeats')
+          if 'policy-rc.d' not in kali_setup_script:
+              missing.append('prevent service startup inside PRoot during package configuration')
+          if 'recover_optional_stalled_theme' not in kali_setup_script:
+              missing.append('recover an incomplete optional Papirus package before dpkg resumes')
+          apt_packages_start = kali_setup_script.find('APT_PACKAGES=(')
+          apt_packages_end = kali_setup_script.find(')', apt_packages_start)
+          apt_package_list = kali_setup_script[apt_packages_start:apt_packages_end]
+          if 'papirus-icon-theme' in apt_package_list:
+              missing.append('keep optional Papirus icon cache generation out of the core Kali install')
+
+          if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
+              missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
+
+          if missing:
+              raise SystemExit(
+                  'Missing expected committed source changes: ' + '; '.join(missing)
+              )
+
+          print('Android AudioTrack pipe, PulseAudio sink routing, GIO, chroot mounts, distro status, updater security, permissions, XFCE and version checks passed.')
+          PY
+
+      - name: Validate Kali APT setup script syntax and configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh"
+          bash -n "$SCRIPT"
+          bash "$SCRIPT" --self-test
+          ! grep -Fq 'KALI_CDN' "$SCRIPT"
+          ! grep -Fq 'KALI_REDIRECTOR' "$SCRIPT"
+          ! grep -Fq 'http://' "$SCRIPT"
+          ! grep -Fq 'stty' "$SCRIPT"
+          test "$(grep -Fc 'run_apt_transaction() {' "$SCRIPT")" -eq 1
+          test "$(grep -Fc 'Package installation and verification completed.' "$SCRIPT")" -eq 1
+
+      - name: Validate non-interactive Kali installer shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/LinuxRuntime.kt'
+          ).read_text()
+          start = source.index('fun installKaliProotDesktop(')
+          end = source.index('private fun configureKaliDns(', start)
+          method = source[start:end]
+          assert '"/bin/bash", "-lc"' not in method
+          assert method.count('"/bin/bash", "-c"') == 3
+          print('Kali setup uses non-login, non-interactive Bash for preflight, APT and verification.')
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Gradle 8.14
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
+
+      - name: Install Android CMake and Build Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "cmake;3.22.1" "build-tools;35.0.0"
+          FLUTTER_SDK="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          printf 'flutter.sdk=%s\n' "$FLUTTER_SDK" > app/android/local.properties
+
+      - name: Configure permanent release signing
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_BASE64: ${{ secrets.DROIDDESK_KEYSTORE_BASE64 }}
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          : "${DROIDDESK_KEYSTORE_BASE64:?Missing DROIDDESK_KEYSTORE_BASE64 secret}"
+          : "${DROIDDESK_KEYSTORE_PASSWORD:?Missing DROIDDESK_KEYSTORE_PASSWORD secret}"
+          : "${DROIDDESK_KEY_ALIAS:?Missing DROIDDESK_KEY_ALIAS secret}"
+          : "${DROIDDESK_KEY_PASSWORD:?Missing DROIDDESK_KEY_PASSWORD secret}"
+
+          KEYSTORE_PATH="$RUNNER_TEMP/droiddesk-release.jks"
+
+          printf '%s' "$DROIDDESK_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+
+          chmod 600 "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$DROIDDESK_KEYSTORE_PASSWORD" \
+            -alias "$DROIDDESK_KEY_ALIAS" >/dev/null
+
+          echo "DROIDDESK_KEYSTORE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+          echo "Permanent release keystore loaded and alias validated."
+
+      - name: Generate Gradle wrapper
+        working-directory: app/android
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: gradle wrapper --gradle-version 8.14 --distribution-type bin --no-validate-url
+
+      - name: Resolve Flutter packages
+        working-directory: app
+        run: flutter pub get
+
+      - name: Run rootfs archive path safety tests
+        working-directory: app/android
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Build ARM64 release APK
+        working-directory: app
+        shell: bash
+        env:
+          DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
+          DROIDDESK_KEY_ALIAS: ${{ secrets.DROIDDESK_KEY_ALIAS }}
+          DROIDDESK_KEY_PASSWORD: ${{ secrets.DROIDDESK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          flutter build apk --release --target-platform android-arm64
+          test -s build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Verify permanent APK signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="app/build/app/outputs/flutter-apk/app-release.apk"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+
+          if [ -z "$SDK_ROOT" ]; then
+            echo "Android SDK path is not configured."
+            exit 1
+          fi
+
+          APKSIGNER="$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+
+          if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+            echo "apksigner was not found in Android build-tools."
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+
+          ACTUAL_SHA256="$(sed -n 's/.*certificate SHA-256 digest: *//p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1 | tr '[:upper:]' '[:lower:]' | tr -d ':')"
+
+          EXPECTED_SHA256="e8ba3273fa8e3ca05db4f13b2c58b9c539808c84c71721a293c6dbad4fe80656"
+
+          if [ -z "$ACTUAL_SHA256" ] || [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "ERROR: APK signing certificate mismatch."
+            echo "Expected: $EXPECTED_SHA256"
+            echo "Actual:   ${ACTUAL_SHA256:-not found}"
+            exit 1
+          fi
+
+          echo "APK certificate matches the permanent DroidDesk release key."
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DroidDesk-1.4.10-arm64
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+}name" + '"'
+          if escaped_shell_name not in runtime or escaped_shell_name_kill not in runtime:
+              missing.append('Kotlin-safe escaping for shell variables in XFCE cleanup commands')
+          if 'pkill -TERM -u kali -x "$name"' in runtime or 'pkill -KILL -u kali -x "$name"' in runtime:
+              missing.append('no unescaped shell variables inside Kotlin raw strings')
           if 'fun snapshot()' not in kali_coordinator or 'private var running = false' not in kali_coordinator:
               missing.append('Kali install process state')
           if 'getKaliInstallStatus' not in platform_bridge or "'getKaliInstallStatus'" not in platform_bridge:
