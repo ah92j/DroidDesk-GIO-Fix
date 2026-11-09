@@ -134,7 +134,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v6',
+              'desktop-experience-v7',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -464,7 +464,7 @@ jobs:
               missing.append('enable XFCE compositing so the transparent dock is not rendered black')
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v6' not in desktop_experience_script or 'desktop-experience-v6' not in runtime:
+          if 'desktop-experience-v7' not in desktop_experience_script or 'desktop-experience-v7' not in runtime:
               missing.append('use the same v5 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
@@ -472,10 +472,16 @@ jobs:
               missing.append('install the direct browser helper')
           if 'GIO_USE_VFS=gvfs' not in runtime:
               missing.append('enable GVFS for Trash')
+          if 'pref("media.rdd-process.enabled", true);' in desktop_experience_script:
+              missing.append('remove invalid pref() call from Firefox user.js')
+          if 'user_pref("media.mediasource.webm.audio.enabled", true);' not in desktop_experience_script:
+              missing.append('enable explicit Firefox WebM audio/video MSE preferences')
           if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script:
               missing.append('enable Firefox software VP8/VP9 fallback, RDD and disable unsupported AV1')
           if 'apt-get --install-recommends' not in desktop_experience_script or 'install -y --reinstall firefox-esr' not in desktop_experience_script:
               missing.append('refresh Firefox ESR with its ABI-matched recommended FFmpeg decoder')
+          if 'file -b "$file"' not in desktop_experience_script or 'Download the ARM64 AppImage' not in desktop_experience_script:
+              missing.append('validate AppImage architecture before creating launcher')
           if 'dpkg-deb -f "$file" Architecture' not in desktop_experience_script or '--fix-broken install' not in desktop_experience_script or 'package-install.log' not in desktop_experience_script:
               missing.append('validate local DEB architecture and recover/report dependency failures')
           if 'Firefox.desktop' not in desktop_experience_script or 'droiddesk-firefox' not in desktop_experience_script:
