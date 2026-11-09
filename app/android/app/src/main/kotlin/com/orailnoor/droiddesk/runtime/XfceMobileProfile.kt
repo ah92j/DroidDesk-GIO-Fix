@@ -22,6 +22,7 @@ object XfceMobileProfile {
         homeDir: File,
         wallpaperFile: File,
         wallpaperPathInSession: String = wallpaperFile.absolutePath,
+        iconThemeName: String = "Adwaita",
     ): Boolean {
         val marker = File(homeDir, PROFILE_MARKER)
         if (marker.exists()) return true
@@ -42,7 +43,11 @@ object XfceMobileProfile {
                 desktopConfig(xmlEscape(wallpaperPathInSession)),
             )
             File(xfconfDir, "xfwm4.xml").writeText(windowManagerConfig())
-            File(xfconfDir, "xsettings.xml").writeText(xsettingsConfig())
+            File(xfconfDir, "xsettings.xml").writeText(
+                xsettingsConfig(
+                    if (iconThemeName in setOf("Papirus", "Adwaita", "hicolor")) iconThemeName else "hicolor",
+                ),
+            )
             File(xfconfDir, "xfce4-terminal.xml").writeText(terminalConfig())
             installMonospaceFontRule(homeDir)
             installPanelCss(homeDir)
@@ -184,7 +189,7 @@ object XfceMobileProfile {
         </channel>
     """.trimIndent() + "\n"
 
-    private fun xsettingsConfig(): String = """
+    private fun xsettingsConfig(iconThemeName: String): String = """
         <?xml version="1.1" encoding="UTF-8"?>
 
         <channel name="xsettings" version="1.0">
@@ -196,7 +201,7 @@ object XfceMobileProfile {
           </property>
           <property name="Net" type="empty">
             <property name="ThemeName" type="string" value="Adwaita"/>
-            <property name="IconThemeName" type="string" value="Adwaita"/>
+            <property name="IconThemeName" type="string" value="$iconThemeName"/>
             <property name="CursorSize" type="int" value="32"/>
           </property>
           <property name="Gtk" type="empty">
