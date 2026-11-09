@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v21"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v22"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -117,7 +117,7 @@ object XfceMobileProfile {
     private fun installFileManagerDefaults(homeDir: File) {
         val configDir = File(homeDir, ".config/xfce4").apply { mkdirs() }
         File(configDir, "helpers.rc").writeText(
-            "FileManager=Thunar\n",
+            "FileManager=Thunar\nWebBrowser=google-chrome.desktop\n",
         )
 
         val mimeApps = File(homeDir, ".config/mimeapps.list")
@@ -312,7 +312,7 @@ object XfceMobileProfile {
               <property name="autohide-behavior" type="uint" value="1"/>
               <property name="size" type="uint" value="$DOCK_SIZE_PX"/>
               <property name="icon-size" type="uint" value="60"/>
-              <property name="background-style" type="uint" value="1"/>
+              <property name="background-style" type="uint" value="0"/>
               <property name="background-rgba" type="array">
                 <value type="double" value="0.965000"/>
                 <value type="double" value="0.961000"/>
