@@ -182,6 +182,9 @@ jobs:
               'val installedDistro = chrootRuntime.getInstalledDistro()',
               'setOf("ubuntu", "kali")',
               '"$installedDistro-chroot"',
+          ]
+
+          required_desktop_activity = [
               'kaliHealthCheckInProgress',
               'KaliDesktopHealthCheck',
               'linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))',
@@ -201,14 +204,15 @@ jobs:
           missing.extend(item for item in required_root_shell if item not in root_shell)
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
+          missing.extend(item for item in required_desktop_activity if item not in desktop_activity)
           missing.extend(item for item in required_updater if item not in updater)
           if 'pgrep -u kali' in runtime or 'pkill -TERM -u kali' in runtime or 'pkill -KILL -u kali' in runtime:
               missing.append('do not filter PRoot process checks by guest UID')
           if 'KaliInstallCoordinator.tryStart()' not in runtime or 'KaliInstallCoordinator.finish(succeeded)' not in runtime:
               missing.append('Kali install single-operation guard')
           shell_name_token = chr(36) + "{'$'}name"
-          escaped_shell_name = 'pkill -TERM -u kali -x "' + shell_name_token + '"'
-          escaped_shell_name_kill = 'pkill -KILL -u kali -x "' + shell_name_token + '"'
+          escaped_shell_name = 'pkill -TERM -x "' + shell_name_token + '"'
+          escaped_shell_name_kill = 'pkill -KILL -x "' + shell_name_token + '"'
           if escaped_shell_name not in runtime or escaped_shell_name_kill not in runtime:
               missing.append('Kotlin-safe escaping for shell variables in XFCE cleanup commands')
           if 'pkill -TERM -u kali -x "$name"' in runtime or 'pkill -KILL -u kali -x "$name"' in runtime:
