@@ -111,6 +111,16 @@ if [[ -f "$panel_xml" ]]; then
   sed -i '/<property name="panel-2" type="empty">/,/<property name="plugin-ids"/ s#<property name="background-style" type="uint" value="[0-9]*"/>#<property name="background-style" type="uint" value="0"/>#' "$panel_xml"
 fi
 
+# Keep XFCE software compositing disabled; the Android X11 surface already composites.
+xfwm_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
+if [[ -f "$xfwm_xml" ]]; then
+  if grep -q 'name="use_compositing"' "$xfwm_xml"; then
+    sed -i -E 's#(<property name="use_compositing" type="bool" value=")true("/>)#\1false\2#' "$xfwm_xml"
+  else
+    sed -i '/<property name="general" type="empty">/a\            <property name="use_compositing" type="bool" value="false"/>' "$xfwm_xml"
+  fi
+fi
+
 # A real launcher ensures Trash remains accessible even if xfdesktop/GVFS is late.
 install -d -m 0755 /home/kali/Desktop
 cat > /home/kali/Desktop/Trash.desktop <<'TRASH'
