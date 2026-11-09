@@ -50,6 +50,17 @@ for package in "${REQUIRED_PACKAGES[@]}"; do
 done
 
 # Official Google Chrome ARM64 repository; failure does not block XFCE startup.
+# Select Chrome only when its signed ARM64 package really installed; otherwise keep a working Firefox handler.
+helpers_file="/home/kali/.config/xfce4/helpers.rc"
+install -d -m 0755 "$(dirname "$helpers_file")"
+if package_installed google-chrome-stable && [[ -f /usr/share/applications/google-chrome.desktop ]]; then
+  printf 'FileManager=Thunar\nWebBrowser=google-chrome.desktop\n' > "$helpers_file"
+elif [[ -f /usr/share/applications/firefox-esr.desktop ]]; then
+  printf 'FileManager=Thunar\nWebBrowser=firefox-esr.desktop\n' > "$helpers_file"
+elif [[ -f /usr/share/applications/firefox.desktop ]]; then
+  printf 'FileManager=Thunar\nWebBrowser=firefox.desktop\n' > "$helpers_file"
+fi
+
 if ! package_installed google-chrome-stable; then
   key_tmp="$(mktemp)"
   if curl -fsSL --retry 3 --connect-timeout 20 https://dl.google.com/linux/linux_signing_key.pub -o "$key_tmp" &&
