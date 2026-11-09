@@ -3118,17 +3118,31 @@ class LinuxRuntime(private val context: Context) {
 
     fun stopSession() {
         Log.i(TAG, "Stopping Linux session...")
-        sessionProcess?.let {
-            it.destroyForcibly()
-            it.waitFor()
-        }
+        val process = sessionProcess
         sessionProcess = null
-        dbusProcess?.destroyForcibly()
-        dbusProcess = null
-        Log.i(TAG, "Session stopped")
-        dbusProcess = null
-        stopPulseAudio()
-        Log.i(TAG, "Session stopped")
+        try {
+            if (process?.isAlive == true) {
+                // Do not wait forever for a stuck PRoot process: a blocked wait here
+                // left the Stop Server MethodChannel call pending and the dashboard
+                // displaying stale controls.
+                process.destroy()
+                if (!process.waitFor(1_500, TimeUnit.MILLISECONDS)) {
+                    process.destroyForcibly()
+                    if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                        Log.e(TAG, "PRoot process did not exit after forced termination")
+                    }
+                }
+            }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            runCatching { process?.destroyForcibly() }
+            Log.w(TAG, "Linux session stop was interrupted", error)
+        } finally {
+            runCatching { dbusProcess?.destroyForcibly() }
+            dbusProcess = null
+            stopPulseAudio()
+        }
+        Log.i(TAG, "Linux session stopped")
     }
 
     // ── Command Execution ──
