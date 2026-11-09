@@ -7,12 +7,12 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v4"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v5"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
-  kali-wallpapers-2026 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
+  kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
   ffmpeg libavcodec-extra gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg
 )
@@ -21,7 +21,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$WALLPAPER_DIR" == "/usr/share/xfce4/backdrops/Kali Linux" ]]
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v4" ]]
+  grep -q 'kali-wallpapers-all' "$0"
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v5" ]]
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -88,9 +89,12 @@ set -euo pipefail
 if [[ -x /usr/bin/google-chrome-stable ]]; then
   exec /usr/bin/google-chrome-stable --no-sandbox --disable-dev-shm-usage --ozone-platform=x11 "$@"
 fi
-for browser in /usr/bin/firefox-esr /usr/bin/firefox /usr/bin/chromium; do
-  if [[ -x "$browser" ]]; then exec "$browser" "$@"; fi
-done
+if [[ -x /home/kali/.local/bin/droiddesk-firefox ]]; then
+  exec /home/kali/.local/bin/droiddesk-firefox "$@"
+fi
+if [[ -x /usr/bin/chromium ]]; then
+  exec /usr/bin/chromium "$@"
+fi
 zenity --error --title='Kali Linux' --text='No supported browser is installed.' 2>/dev/null || true
 exit 127
 BROWSER
@@ -142,7 +146,45 @@ CHROME_DESKTOP
   chmod 0755 "/home/kali/Desktop/Google Chrome.desktop"
 fi
 
-# Firefox media fallback and audio routing for PRoot X11.
+# Firefox ESR wrapper, desktop shortcut and PRoot-friendly media preferences.
+cat > /home/kali/.local/bin/droiddesk-firefox <<'FIREFOX'
+#!/usr/bin/env bash
+set -euo pipefail
+export PULSE_SERVER=tcp:127.0.0.1:4713
+export PULSE_SINK=droiddesk_android
+export PULSE_LATENCY_MSEC=80
+export MOZ_DISABLE_CONTENT_SANDBOX=1
+export MOZ_ENABLE_WAYLAND=0
+export GDK_BACKEND=x11
+firefox_bin="$(command -v firefox-esr || command -v firefox || true)"
+if [[ -z "$firefox_bin" ]]; then
+  zenity --error --title='Kali Linux' --text='Firefox ESR is not installed.' 2>/dev/null || true
+  exit 127
+fi
+exec "$firefox_bin" "$@"
+FIREFOX
+chmod 0755 /home/kali/.local/bin/droiddesk-firefox
+
+if [[ -x /usr/bin/firefox-esr || -x /usr/bin/firefox ]]; then
+  cat > /home/kali/.local/share/applications/droiddesk-firefox.desktop <<'FIREFOX_DESKTOP'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Firefox
+Comment=Browse the web with Firefox
+Exec=/home/kali/.local/bin/droiddesk-firefox %U
+TryExec=/home/kali/.local/bin/droiddesk-firefox
+Icon=firefox-esr
+Terminal=false
+StartupNotify=true
+Categories=Network;WebBrowser;
+FIREFOX_DESKTOP
+  cp -f /home/kali/.local/share/applications/droiddesk-firefox.desktop /home/kali/Desktop/Firefox.desktop
+  chmod 0755 /home/kali/.local/share/applications/droiddesk-firefox.desktop /home/kali/Desktop/Firefox.desktop
+fi
+
+# Prefer the system FFmpeg decoder for VP8/VP9 and disable unsupported GPU/VA-API
+# paths in PRoot. Keep Firefox's normal RDD process enabled.
 for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
   pref_dir="$firefox_root/defaults/pref"
   if [[ -d "$pref_dir" ]]; then
@@ -150,11 +192,14 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
 pref("media.cubeb.sandbox", false);
 pref("media.cubeb.backend", "pulse");
 pref("media.ffmpeg.enabled", true);
-pref("media.ffvpx.enabled", true);
+pref("media.ffvpx.enabled", false);
 pref("media.av1.enabled", false);
+pref("media.ffmpeg.vaapi.enabled", false);
+pref("media.hardware-video-decoding.enabled", false);
 pref("media.mediasource.enabled", true);
 pref("media.mediasource.webm.enabled", true);
 pref("media.mediasource.vp9.enabled", true);
+pref("media.mediasource.mp4.enabled", true);
 FIREFOX_PREFS
     chmod 0644 "$pref_dir/droiddesk-media.js"
   fi
@@ -164,8 +209,7 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
     user_prefs="$profile_dir/user.js"
     touch "$user_prefs"
     while IFS= read -r pref_line; do
-      pref_name="${pref_line#user_pref(\"}"
-      pref_name="${pref_name%%\"*}"
+      pref_name="$(printf '%s' "$pref_line" | cut -d'"' -f2)"
       if grep -q "user_pref(\"$pref_name\"" "$user_prefs"; then
         sed -i "/^user_pref(\"$pref_name\"/d" "$user_prefs"
       fi
@@ -174,33 +218,55 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
 user_pref("media.cubeb.sandbox", false);
 user_pref("media.cubeb.backend", "pulse");
 user_pref("media.ffmpeg.enabled", true);
-user_pref("media.ffvpx.enabled", true);
+user_pref("media.ffvpx.enabled", false);
 user_pref("media.av1.enabled", false);
+user_pref("media.ffmpeg.vaapi.enabled", false);
+user_pref("media.hardware-video-decoding.enabled", false);
 user_pref("media.mediasource.enabled", true);
 user_pref("media.mediasource.webm.enabled", true);
 user_pref("media.mediasource.vp9.enabled", true);
+user_pref("media.mediasource.mp4.enabled", true);
 FIREFOX_USER_PREFS
   done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
 fi
 
-# Collect Kali wallpapers into one selectable XFCE folder.
+# Build one flat XFCE gallery from every official Kali wallpaper package.
+WALLPAPER_PACKAGES=(
+  kali-wallpapers-2026 kali-wallpapers-2025 kali-wallpapers-2024
+  kali-wallpapers-2023 kali-wallpapers-2022 kali-wallpapers-2020.4
+  kali-wallpapers-2019.4 kali-wallpapers-legacy
+)
 install -d -m 0755 "$WALLPAPER_DIR"
-# Query the Kali wallpaper package manifest; package contents are not assumed to
-# live only under */backgrounds or */wallpapers.
-while IFS= read -r image_file; do
-  [[ -f "$image_file" ]] || continue
-  case "$image_file" in *.jpg|*.jpeg|*.png|*.webp|*.svg) ;; *) continue ;; esac
-  image_name="$(basename "$image_file")"
-  ln -sfn "$image_file" "$WALLPAPER_DIR/$image_name"
-done < <(dpkg-query -L kali-wallpapers-2026 2>/dev/null || true)
-if [[ "$(find "$WALLPAPER_DIR" -maxdepth 1 -type l | wc -l)" -eq 0 ]]; then
-  while IFS= read -r -d '' image_file; do
+# Remove links produced by the previous migration, then re-index every installed release.
+find "$WALLPAPER_DIR" -maxdepth 1 -type l -delete
+for package in "${WALLPAPER_PACKAGES[@]}"; do
+  while IFS= read -r image_file; do
+    [[ -f "$image_file" ]] || continue
+    image_lower="$(printf '%s' "$image_file" | tr '[:upper:]' '[:lower:]')"
+    case "$image_lower" in *.jpg|*.jpeg|*.png|*.webp|*.svg) ;; *) continue ;; esac
     image_name="$(basename "$image_file")"
-    ln -sfn "$image_file" "$WALLPAPER_DIR/$image_name"
-  done < <(find /usr/share -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) -print0)
-fi
-wallpaper_count="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l | wc -l)"
+    target="$WALLPAPER_DIR/$image_name"
+    if [[ -e "$target" || -L "$target" ]]; then
+      target="$WALLPAPER_DIR/$package-$image_name"
+    fi
+    [[ -e "$target" || -L "$target" ]] && continue
+    ln -sfn "$image_file" "$target"
+  done < <(dpkg-query -L "$package" 2>/dev/null || true)
+done
+wallpaper_count="$(find "$WALLPAPER_DIR" -maxdepth 1 \( -type f -o -type l \) | wc -l)"
 echo "[Kali Linux] Official wallpaper choices exposed to XFCE: $wallpaper_count"
+
+default_wallpaper="$WALLPAPER_DIR/kali-cubes2-16x9.jpg"
+if [[ ! -f "$default_wallpaper" ]]; then
+  default_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 \( -type f -o -type l \) -iname '*cubes2*' -print -quit || true)"
+fi
+if [[ -z "$default_wallpaper" ]]; then
+  default_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 \( -type f -o -type l \) -print -quit || true)"
+fi
+if [[ -z "$default_wallpaper" || ! -f "$default_wallpaper" ]]; then
+  echo "[Kali Linux] No official Kali wallpaper files were found after package installation."
+  exit 21
+fi
 
 desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 if [[ -f "$desktop_xml" ]]; then
@@ -209,25 +275,15 @@ if [[ -f "$desktop_xml" ]]; then
   else
     sed -i '\#<property name="monitorbuiltin" type="empty">#a\                <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>' "$desktop_xml"
   fi
+  if grep -q 'name="last-image"' "$desktop_xml"; then
+    sed -i "0,/name=\"last-image\"/s#value=\"[^\"]*\"#value=\"$default_wallpaper\"#" "$desktop_xml"
+  else
+    sed -i "/name=\"image-style\"/a\                  <property name=\"last-image\" type=\"string\" value=\"$default_wallpaper\"/>" "$desktop_xml"
+  fi
   if grep -q 'name="show-trash"' "$desktop_xml"; then
     sed -i -E 's#(<property name="show-trash" type="bool" value=")false("/>)#\1true\2#' "$desktop_xml"
   else
     sed -i '/<property name="show-filesystem"/a\              <property name="show-trash" type="bool" value="true"/>' "$desktop_xml"
-  fi
-  current_wallpaper="$(sed -n 's/.*name="last-image"[^>]*value="\([^"]*\)".*/\1/p' "$desktop_xml" | head -n 1)"
-  case "$current_wallpaper" in
-    "$WALLPAPER_DIR"/*) [[ -f "$current_wallpaper" ]] || current_wallpaper="" ;;
-    *) current_wallpaper="" ;;
-  esac
-  if [[ -z "$current_wallpaper" ]]; then
-    first_wallpaper="$WALLPAPER_DIR/kali-cubes2-16x9.jpg"
-    if [[ ! -e "$first_wallpaper" ]]; then
-      first_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l -iname '*cubes2*' -print -quit || true)"
-    fi
-    [[ -n "$first_wallpaper" && -e "$first_wallpaper" ]] || first_wallpaper="$(find "$WALLPAPER_DIR" -maxdepth 1 -type l -print | sort | head -n 1 || true)"
-    if [[ -n "$first_wallpaper" ]]; then
-      sed -i "0,/name=\"last-image\"/s#value=\"[^\"]*\"#value=\"$first_wallpaper\"#" "$desktop_xml"
-    fi
   fi
 fi
 
@@ -247,20 +303,8 @@ if [[ -f "$xfwm_xml" ]]; then
   fi
 fi
 
-# A real launcher ensures Trash remains accessible even if xfdesktop/GVFS is late.
-install -d -m 0755 /home/kali/Desktop
-cat > /home/kali/Desktop/Trash.desktop <<'TRASH'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Trash
-Comment=Open deleted files
-Exec=thunar trash:///
-Icon=user-trash
-Terminal=false
-StartupNotify=true
-TRASH
-chmod 0755 /home/kali/Desktop/Trash.desktop
+# Keep only XFCE's native Trash desktop icon; remove the duplicate custom shortcut.
+rm -f /home/kali/Desktop/Trash.desktop
 
 # Open downloaded .deb files in the installer; AppImages get menu + desktop launchers.
 install -d -m 0755 /home/kali/.local/bin /home/kali/.local/share/applications
