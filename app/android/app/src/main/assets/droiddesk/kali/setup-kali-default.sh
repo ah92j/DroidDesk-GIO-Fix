@@ -43,6 +43,8 @@ APT_PACKAGES=(
   x11-utils
   fonts-noto-core
   adwaita-icon-theme
+  thunar
+  exo-utils
 )
 
 # CI-only validation mode. This does not modify /etc, /var, dpkg, or the network.
@@ -281,6 +283,9 @@ fi
 
 echo "[DroidDesk Kali] Verifying the requested package set..."
 dpkg-query -W -f='${Status}' kali-linux-default | grep -qx 'install ok installed'
+dpkg-query -W -f='${Status}' thunar | grep -qx 'install ok installed'
+test -x /usr/bin/thunar
+test -x /usr/bin/exo-open
 test -x /usr/bin/startxfce4
 test -x /usr/bin/dbus-launch
 test -x /usr/bin/xfce4-session
