@@ -133,7 +133,6 @@ jobs:
               'gdk-pixbuf-csource --raw --name=droiddesk_svg_probe',
               'glycin-thumbnailers',
               'libglycin-2-0',
-              'glycin-thumbnailers',
               'private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String',
               'has_live_process()',
               'has_viewable_window()',
@@ -361,6 +360,7 @@ jobs:
               'librsvg2-common',
               'glycin-loaders',
               'libglycin-2-0',
+              'glycin-thumbnailers',
               'Acquire::ForceIPv4=true',
               'Acquire::https::Verify-Peer=true',
               'Acquire::https::Verify-Host=true',
@@ -607,7 +607,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.15-arm64
+          name: DroidDesk-1.4.16-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
