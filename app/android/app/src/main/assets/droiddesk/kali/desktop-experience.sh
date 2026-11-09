@@ -108,6 +108,21 @@ BROWSER_DESKTOP
 chmod 0644 /home/kali/.local/share/applications/droiddesk-browser.desktop
 printf '%s\n' 'FileManager=Thunar' 'WebBrowser=droiddesk-browser.desktop' > /home/kali/.config/xfce4/helpers.rc
 
+# Replace the saved browser launcher used by the existing bottom dock.
+install -d -m 0755 /home/kali/.config/xfce4/panel/launcher-23
+cat > /home/kali/.config/xfce4/panel/launcher-23/droiddesk-browser.desktop <<'DOCK_BROWSER'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Web Browser
+Comment=Open the installed Kali browser
+Exec=/home/kali/.local/bin/droiddesk-browser %U
+Icon=web-browser
+Terminal=false
+StartupNotify=true
+DOCK_BROWSER
+chmod 0755 /home/kali/.config/xfce4/panel/launcher-23/droiddesk-browser.desktop
+
 # Create an obvious Chrome icon only after the ARM64 binary is present.
 if package_installed google-chrome-stable && [[ -x /usr/bin/google-chrome-stable ]]; then
   cat > "/home/kali/Desktop/Google Chrome.desktop" <<'CHROME_DESKTOP'
