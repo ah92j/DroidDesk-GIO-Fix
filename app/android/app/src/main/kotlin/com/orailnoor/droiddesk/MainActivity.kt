@@ -86,27 +86,9 @@ class MainActivity : FlutterActivity() {
         desktopIntegration = DesktopIntegration(this)
 
         
+        // Flutter AppState is the single owner of the auto-start preference.
+        // Do not start a second DesktopActivity from the native lifecycle here.
         handleHomeLaunch(intent)
-        maybeAutoStartDesktop(intent)
-    }
-
-    /** Launch Linux automatically only when the user has explicitly enabled the setting. */
-    private fun maybeAutoStartDesktop(launchIntent: Intent) {
-        val isHomeLaunch = launchIntent.action == Intent.ACTION_MAIN &&
-            launchIntent.hasCategory(Intent.CATEGORY_HOME)
-        if (isHomeLaunch || launchIntent.action == ACTION_OPEN_DESKTOP) return
-        val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("flutter.autoStartDesktop", false)) return
-
-        thread(name = "auto-start-desktop-check") {
-            runCatching { resolveDesktopLaunchConfig() }
-                .onSuccess { config ->
-                    runOnUiThread { launchDesktopScreen(config, startSession = !config.isRunning) }
-                }
-                .onFailure { error ->
-                    Log.w(TAG, "Auto-start skipped; Linux desktop is not ready: ${error.message}")
-                }
-        }
     }
 
     override fun onResume() {
@@ -158,21 +140,12 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleHomeLaunch(homeIntent: Intent) {
-        val isHomeLaunch = homeIntent.action == Intent.ACTION_MAIN &&
-            homeIntent.hasCategory(Intent.CATEGORY_HOME)
-        if (!isHomeLaunch && homeIntent.action != ACTION_OPEN_DESKTOP) return
+        // Flutter AppState handles a HOME launch and the user's auto-start setting.
+        // Native code handles only the explicit notification action, so a cold start
+        // cannot create two DesktopActivity instances competing for the same X11 view.
+        if (homeIntent.action != ACTION_OPEN_DESKTOP) return
 
-        // A HOME intent must show the responsive DroidDesk dashboard by default.
-        // Starting XFCE here without the explicit auto-start preference caused a
-        // blank desktop loading screen before the user could reach the app controls.
-        if (isHomeLaunch) {
-            val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-            if (!prefs.getBoolean("flutter.autoStartDesktop", false)) return
-        }
-
-        if (homeIntent.action == ACTION_OPEN_DESKTOP &&
-            com.orailnoor.droiddesk.view.DesktopActivity.isOpen()
-        ) {
+        if (com.orailnoor.droiddesk.view.DesktopActivity.isOpen()) {
             startActivity(
                 Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
@@ -181,7 +154,7 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        thread(name = "home-launch") {
+        thread(name = "notification-open-desktop") {
             runCatching { resolveDesktopLaunchConfig() }
                 .onSuccess { config ->
                     runOnUiThread {
@@ -189,7 +162,7 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 .onFailure { error ->
-                    Log.i(TAG, "Home desktop auto-start skipped: ${error.message}")
+                    Log.i(TAG, "Notification desktop launch skipped: ${error.message}")
                 }
         }
     }
@@ -1085,8 +1058,15 @@ class MainActivity : FlutterActivity() {
 
     /** Must be called on the UI thread after [resolveDesktopLaunchConfig] completed on a worker. */
     private fun launchDesktopScreen(config: DesktopLaunchConfig, startSession: Boolean) {
+        val desktopClass = com.orailnoor.droiddesk.view.DesktopActivity::class.java
+        if (com.orailnoor.droiddesk.view.DesktopActivity.isOpen()) {
+            // Reuse the existing LorieView owner; creating a second activity can
+            // detach the surface from the first one and leave the UI unresponsive.
+            startActivity(Intent(this, desktopClass).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            return
+        }
         startForegroundService()
-        startActivity(Intent(this, com.orailnoor.droiddesk.view.DesktopActivity::class.java).apply {
+        startActivity(Intent(this, desktopClass).apply {
             putExtra("startSession", startSession)
             putExtra("mode", config.mode)
             putExtra("de", config.desktopEnv)
