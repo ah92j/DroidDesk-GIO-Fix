@@ -98,6 +98,9 @@ jobs:
           activity = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/MainActivity.kt'
           ).read_text()
+          desktop_activity = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
+          ).read_text()
           updater = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
           ).read_text()
@@ -112,6 +115,7 @@ jobs:
 
           required_runtime = [
               'fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 50): Boolean',
+              'File(rootfs, "usr/share/icons/$theme/index.theme").isFile',
               'wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg"',
               '"/usr/bin/sudo", "-E", "-u", "kali", "/bin/bash", "-c", sessionScript',
               'env["PULSE_SERVER"] = "tcp:127.0.0.1:4713"',
@@ -144,8 +148,6 @@ jobs:
               'xsettingsConfig(iconThemeName: String)',
               'iconThemeName: String = "Adwaita"',
               'value="$iconThemeName"',
-              'File(rootfs, "usr/share/icons/$theme/index.theme").isFile',
-              'adwaita-icon-theme',
               'File(homeDir, "Desktop").mkdirs()',
               '<property name="style" type="int" value="2"/>',
           ]
@@ -274,6 +276,7 @@ jobs:
               'run_with_package_heartbeat',
               'policy-rc.d',
               'recover_optional_stalled_theme',
+              'adwaita-icon-theme',
               'URIs: $repository_uri',
               '/var/cache/apt/archives/partial',
               '/var/lib/apt/lists/partial',
@@ -305,9 +308,9 @@ jobs:
               missing.append('all three Kali install/check commands use non-login bash -c')
           if 'startForegroundService()' not in activity[activity.find('"installKaliProotDesktop"'):]:
               missing.append('Kali install must start the DroidDesk foreground service')
-          if 'waitForKaliDesktopReady(File(filesDir, "rootfs"))' not in activity:
+          if 'waitForKaliDesktopReady(File(filesDir, "rootfs"))' not in desktop_activity:
               missing.append('Kali desktop readiness must be checked inside the Kali PRoot rootfs')
-          if 'sessionMode == "proot-kali" -> 55' not in activity:
+          if 'sessionMode == "proot-kali" -> 55' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
           if 'version: 1.4.9+24' not in pubspec:
