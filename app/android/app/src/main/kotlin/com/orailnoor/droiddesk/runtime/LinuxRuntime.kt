@@ -862,7 +862,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v5")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v6")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -902,7 +902,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v5").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v6").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)

@@ -134,7 +134,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v5',
+              'desktop-experience-v6',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -433,8 +433,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.22+39' not in pubspec:
-              missing.append('expected release version 1.4.22+39')
+          if 'version: 1.4.23+40' not in pubspec:
+              missing.append('expected release version 1.4.23+40')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -455,7 +455,7 @@ jobs:
               missing.append('Android launcher label must be Kali Linux')
           if "Text('Kali Linux', style: DroidTheme.headingMd)" not in home_screen:
               missing.append('home dashboard title must be Kali Linux')
-          for package in ['gvfs', 'gvfs-daemons', 'gvfs-backends', 'kali-wallpapers-all', 'firefox-esr', 'libpulse0', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'libavcodec-extra', 'gstreamer1.0-libav']:
+          for package in ['gvfs', 'gvfs-daemons', 'gvfs-backends', 'kali-wallpapers-all', 'firefox-esr', 'libpulse0', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'gstreamer1.0-libav']:
               if package not in desktop_experience_script:
                   missing.append(f'desktop-experience migration must install {package}')
           if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
@@ -464,7 +464,7 @@ jobs:
               missing.append('enable XFCE compositing so the transparent dock is not rendered black')
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v5' not in desktop_experience_script or 'desktop-experience-v5' not in runtime:
+          if 'desktop-experience-v6' not in desktop_experience_script or 'desktop-experience-v6' not in runtime:
               missing.append('use the same v5 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
@@ -472,8 +472,12 @@ jobs:
               missing.append('install the direct browser helper')
           if 'GIO_USE_VFS=gvfs' not in runtime:
               missing.append('enable GVFS for Trash')
-          if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", false' not in desktop_experience_script:
-              missing.append('use system FFmpeg decoding and disable unsupported AV1 in Firefox')
+          if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script:
+              missing.append('enable Firefox software VP8/VP9 fallback, RDD and disable unsupported AV1')
+          if 'apt-get --install-recommends' not in desktop_experience_script or 'install -y --reinstall firefox-esr' not in desktop_experience_script:
+              missing.append('refresh Firefox ESR with its ABI-matched recommended FFmpeg decoder')
+          if 'dpkg-deb -f "$file" Architecture' not in desktop_experience_script or '--fix-broken install' not in desktop_experience_script or 'package-install.log' not in desktop_experience_script:
+              missing.append('validate local DEB architecture and recover/report dependency failures')
           if 'Firefox.desktop' not in desktop_experience_script or 'droiddesk-firefox' not in desktop_experience_script:
               missing.append('install a dedicated Firefox desktop launcher with PulseAudio environment')
           if 'rm -f /home/kali/Desktop/Trash.desktop' not in desktop_experience_script:
@@ -663,7 +667,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.22-arm64
+          name: Kali-Linux-1.4.23-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
