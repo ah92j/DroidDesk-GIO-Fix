@@ -129,8 +129,11 @@ jobs:
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
-              'gdk-pixbuf-thumbnailer',
+              'gdk-pixbuf-csource --raw --name=droiddesk_png_probe',
+              'gdk-pixbuf-csource --raw --name=droiddesk_svg_probe',
+              'glycin-thumbnailers',
               'libglycin-2-0',
+              'glycin-thumbnailers',
               'private fun kaliDesktopHealthCheckScript(timeoutSeconds: Int = 0): String',
               'has_live_process()',
               'has_viewable_window()',
@@ -410,8 +413,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.15+31' not in pubspec:
-              missing.append('version: 1.4.15+31')
+          if 'version: 1.4.16+32' not in pubspec:
+              missing.append('version: 1.4.16+32')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:

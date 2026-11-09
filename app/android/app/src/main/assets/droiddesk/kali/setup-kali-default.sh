@@ -47,6 +47,7 @@ APT_PACKAGES=(
   librsvg2-common
   glycin-loaders
   libglycin-2-0
+  glycin-thumbnailers
   xclip
   x11-utils
   fonts-noto-core
@@ -65,7 +66,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Peer=true"* ]]
   [[ " ${APT_OPTIONS[*]} " == *"Acquire::https::Verify-Host=true"* ]]
   [[ " ${APT_OPTIONS[*]} " == *"APT::Keep-Downloaded-Packages=true"* ]]
-  for package in bubblewrap dbus-daemon shared-mime-info libgdk-pixbuf2.0-bin hicolor-icon-theme librsvg2-common glycin-loaders libglycin-2-0; do
+  for package in bubblewrap dbus-daemon shared-mime-info libgdk-pixbuf2.0-bin hicolor-icon-theme librsvg2-common glycin-loaders libglycin-2-0 glycin-thumbnailers; do
     [[ " ${APT_PACKAGES[*]} " == *" ${package} "* ]]
   done
   printf '%s\n' "[DroidDesk Kali] APT setup configuration checks passed."

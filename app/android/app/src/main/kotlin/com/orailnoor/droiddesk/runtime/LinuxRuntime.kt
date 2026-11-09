@@ -473,67 +473,104 @@ class LinuxRuntime(private val context: Context) {
             minimum_version='2.2.2+ds-1'
             needs_update=0
 
-            for package in glycin-loaders libglycin-2-0; do
-              status="${'$'}(dpkg-query -W -f='${'$'}{Status}' "${'$'}package" 2>/dev/null || true)"
-              version="${'$'}(dpkg-query -W -f='${'$'}{Version}' "${'$'}package" 2>/dev/null || true)"
-              if [ "${'$'}status" != "install ok installed" ]; then
-                echo "[DroidDesk Kali] Required image-loader package is missing: ${'$'}package"
+            for package in glycin-loaders libglycin-2-0 glycin-thumbnailers; do
+              status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+              version="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
+              if [ "$status" != "install ok installed" ]; then
+                echo "[DroidDesk Kali] Required image-loader package is missing: $package"
                 needs_update=1
-              elif ! dpkg --compare-versions "${'$'}version" ge "${'$'}minimum_version"; then
-                echo "[DroidDesk Kali] ${'$'}package ${'$'}version is older than ${'$'}minimum_version"
+              elif ! dpkg --compare-versions "$version" ge "$minimum_version"; then
+                echo "[DroidDesk Kali] $package $version is older than $minimum_version"
                 needs_update=1
               fi
             done
 
-            if [ "${'$'}needs_update" -eq 1 ]; then
-              echo "[DroidDesk Kali] Updating Kali Glycin packages to the Android-compatible release..."
+            if [ "$needs_update" -eq 1 ]; then
+              echo "[DroidDesk Kali] Updating Kali Glycin packages for Android PRoot compatibility..."
               apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
                 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
               apt-get -o Acquire::Retries=3 \
                 -o Dpkg::Options::=--force-confdef \
                 -o Dpkg::Options::=--force-confold \
-                install -y --no-install-recommends glycin-loaders libglycin-2-0
+                install -y --no-install-recommends \
+                glycin-loaders libglycin-2-0 glycin-thumbnailers
             fi
 
-            for package in glycin-loaders libglycin-2-0; do
-              version="${'$'}(dpkg-query -W -f='${'$'}{Version}' "${'$'}package")"
-              if ! dpkg --compare-versions "${'$'}version" ge "${'$'}minimum_version"; then
-                echo "[DroidDesk Kali] ${'$'}package remains at ${'$'}version; need ${'$'}minimum_version or newer."
+            for package in glycin-loaders libglycin-2-0 glycin-thumbnailers; do
+              version="$(dpkg-query -W -f='${Version}' "$package")"
+              if ! dpkg --compare-versions "$version" ge "$minimum_version"; then
+                echo "[DroidDesk Kali] $package remains at $version; need $minimum_version or newer."
                 exit 31
               fi
-              echo "[DroidDesk Kali] ${'$'}package version: ${'$'}version"
+              echo "[DroidDesk Kali] $package version: $version"
             done
 
             dpkg --configure -a
-            if command -v gdk-pixbuf-query-loaders >/dev/null 2>&1; then
-              gdk-pixbuf-query-loaders --update-cache
+
+            if ! command -v gdk-pixbuf-csource >/dev/null 2>&1; then
+              echo "[DroidDesk Kali] Restoring the ARM64 GDK Pixbuf test utility package..."
+              apt-get install -y --reinstall libgdk-pixbuf2.0-bin
             fi
-            command -v gdk-pixbuf-thumbnailer >/dev/null 2>&1 || {
-              echo "[DroidDesk Kali] gdk-pixbuf-thumbnailer is not installed."
+            command -v gdk-pixbuf-csource >/dev/null 2>&1 || {
+              echo "[DroidDesk Kali] gdk-pixbuf-csource is missing after reinstalling libgdk-pixbuf2.0-bin."
               exit 32
             }
 
-            svg='/usr/share/icons/Adwaita/scalable/status/image-missing.svg'
-            if [ ! -s "${'$'}svg" ]; then
-              svg="${'$'}(find /usr/share/icons -type f -name '*.svg' -print -quit 2>/dev/null || true)"
+            if command -v gdk-pixbuf-query-loaders >/dev/null 2>&1; then
+              gdk-pixbuf-query-loaders --update-cache || true
             fi
-            [ -n "${'$'}svg" ] && [ -s "${'$'}svg" ] || {
+
+            svg='/usr/share/icons/Adwaita/scalable/status/image-missing.svg'
+            if [ ! -s "$svg" ]; then
+              svg="$(find /usr/share/icons -type f -name '*.svg' -print -quit 2>/dev/null || true)"
+            fi
+            [ -n "$svg" ] && [ -s "$svg" ] || {
               echo "[DroidDesk Kali] No installed SVG icon is available for the image-loader test."
               exit 33
             }
 
-            install -d -m 0700 /tmp/droiddesk-glycin-test-cache
-            rm -f /tmp/droiddesk-glycin-probe.png
-            env GLYCIN_DISABLE_SANDBOX=i-know-the-risks \
-              HOME=/root XDG_CACHE_HOME=/tmp/droiddesk-glycin-test-cache \
-              /usr/bin/gdk-pixbuf-thumbnailer -s 48 "${'$'}svg" /tmp/droiddesk-glycin-probe.png
-            test -s /tmp/droiddesk-glycin-probe.png || {
-              echo "[DroidDesk Kali] GdkPixbuf could not decode the SVG with the Android-compatible Glycin mode."
+            probe_dir='/tmp/droiddesk-glycin-probe'
+            rm -rf "$probe_dir"
+            install -d -m 0700 "$probe_dir" "$probe_dir/cache" "$probe_dir/runtime"
+            chmod 0700 "$probe_dir/runtime"
+            trap 'rm -rf "$probe_dir"' EXIT
+
+            # GdkPixbuf 2.44 on ARM64 uses Glycin. Its legacy
+            # gdk-pixbuf-thumbnailer command is intentionally not shipped here.
+            # csource remains available and calls GdkPixbuf's real image loader.
+            printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==' \
+              | base64 -d > "$probe_dir/probe.png"
+            test -s "$probe_dir/probe.png" || {
+              echo "[DroidDesk Kali] Could not create the PNG decoder test image."
               exit 34
             }
-            rm -f /tmp/droiddesk-glycin-probe.png
-            rm -rf /tmp/droiddesk-glycin-test-cache
-            echo "[DroidDesk Kali] Glycin package versions and SVG decoding test passed."
+
+            export GLYCIN_DISABLE_SANDBOX=i-know-the-risks
+            export HOME=/root
+            export XDG_CACHE_HOME="$probe_dir/cache"
+            export XDG_RUNTIME_DIR="$probe_dir/runtime"
+            export XDG_DATA_HOME=/root/.local/share
+            export XDG_CONFIG_HOME=/root/.config
+            export XDG_DATA_DIRS=/usr/local/share:/usr/share
+
+            echo "[DroidDesk Kali] Testing the actual GdkPixbuf PNG loader without nested Bubblewrap..."
+            gdk-pixbuf-csource --raw --name=droiddesk_png_probe \
+              "$probe_dir/probe.png" > "$probe_dir/png.c"
+            test -s "$probe_dir/png.c" || {
+              echo "[DroidDesk Kali] GdkPixbuf PNG decoding failed with Glycin sandbox disabled."
+              exit 35
+            }
+
+            echo "[DroidDesk Kali] Testing the actual GdkPixbuf SVG loader without nested Bubblewrap..."
+            gdk-pixbuf-csource --raw --name=droiddesk_svg_probe \
+              "$svg" > "$probe_dir/svg.c"
+            test -s "$probe_dir/svg.c" || {
+              echo "[DroidDesk Kali] GdkPixbuf SVG decoding failed with Glycin sandbox disabled."
+              exit 36
+            }
+
+            echo "[DroidDesk Kali] GdkPixbuf PNG and SVG decoding tests passed."
+            echo "[DroidDesk Kali] Glycin nested sandbox is disabled only for this PRoot desktop session."
         """.trimIndent()
 
         val result = runKaliProotCommand(
@@ -551,9 +588,9 @@ class LinuxRuntime(private val context: Context) {
         )
         if (result.exitCode != 0) {
             lastKaliDesktopDiagnostic = buildString {
-                append("Kali image-loader compatibility repair failed.\n")
-                append("Android blocks Bubblewrap's /proc/sys/kernel/overflowuid access.\n")
-                append("Required libglycin version: ").append(minimumVersion).append(" or newer.\n")
+                append("Kali GdkPixbuf/Glycin compatibility test failed.\n")
+                append("The nested Bubblewrap sandbox is intentionally disabled for Android PRoot.\n")
+                append("Required Glycin packages: ").append(minimumVersion).append(" or newer.\n")
                 append(result.output.takeLast(5000))
             }.takeLast(5600)
             Log.e(TAG, lastKaliDesktopDiagnostic)
@@ -563,7 +600,7 @@ class LinuxRuntime(private val context: Context) {
         File(rootfs, "home/kali/.cache/glycin").deleteRecursively()
         File(rootfs, "root/.cache/glycin").deleteRecursively()
         lastKaliDesktopDiagnostic = ""
-        Log.i(TAG, "Kali Glycin Android compatibility and SVG decoding test passed")
+        Log.i(TAG, "Kali GdkPixbuf PNG/SVG tests passed with Glycin sandbox disabled")
         return true
     }
 
@@ -584,6 +621,7 @@ class LinuxRuntime(private val context: Context) {
               hicolor-icon-theme
               adwaita-icon-theme
               librsvg2-common
+              glycin-thumbnailers
               glycin-loaders
               libglycin-2-0
             )
