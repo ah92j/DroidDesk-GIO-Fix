@@ -44,6 +44,7 @@ class MainActivity : FlutterActivity() {
     private lateinit var desktopIntegration: DesktopIntegration
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val desktopLaunchInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
     private val logBuffer = StringBuffer()
     private var lastLogFlushTime = 0L
     private val logFlushRunnable = Runnable { flushLogBuffer() }
@@ -1067,12 +1068,24 @@ class MainActivity : FlutterActivity() {
             startActivity(Intent(this, desktopClass).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             return
         }
-        startForegroundService()
-        startActivity(Intent(this, desktopClass).apply {
-            putExtra("startSession", startSession)
-            putExtra("mode", config.mode)
-            putExtra("de", config.desktopEnv)
-        })
+        // A rapid double tap or overlapping Flutter/native start request must not
+        // enqueue two activity launches before DesktopActivity.onCreate() runs.
+        if (!desktopLaunchInProgress.compareAndSet(false, true)) {
+            Log.w(TAG, "Ignored duplicate desktop launch request")
+            return
+        }
+        try {
+            startForegroundService()
+            startActivity(Intent(this, desktopClass).apply {
+                putExtra("startSession", startSession)
+                putExtra("mode", config.mode)
+                putExtra("de", config.desktopEnv)
+            })
+            mainHandler.postDelayed({ desktopLaunchInProgress.set(false) }, 2_000)
+        } catch (error: Throwable) {
+            desktopLaunchInProgress.set(false)
+            throw error
+        }
     }
 
     private fun openDesktop(startSession: Boolean) {
