@@ -137,7 +137,11 @@ class DesktopActivity : Activity() {
         shouldStartSession = intent.getBooleanExtra("startSession", false)
         sessionMode = intent.getStringExtra("mode") ?: if (chrootRuntime.hasRoot()) "chroot" else "termux"
         desktopEnv = intent.getStringExtra("de") ?: "xfce4"
-        estimatedLoadingSeconds = if (shouldStartSession) 30 else 10
+        estimatedLoadingSeconds = when {
+            !shouldStartSession -> 10
+            sessionMode == "proot-kali" -> 55
+            else -> 30
+        }
 
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -189,7 +193,7 @@ class DesktopActivity : Activity() {
             bringToFront()
         }
         logoAnimator?.start()
-        estimatedLoadingSeconds = 30
+        estimatedLoadingSeconds = if (sessionMode == "proot-kali") 55 else 30
         loadingStartedAt = android.os.SystemClock.elapsedRealtime()
         loadingMessageHandler.postDelayed(loadingMessageTicker, 5_000)
         loadingMessageHandler.postDelayed(loadingEstimateTicker, 1_000)
@@ -637,10 +641,10 @@ class DesktopActivity : Activity() {
                 } else {
                     linuxRuntime.startSession(desktopEnv, "x11")
                 }
-                val ready = if (sessionMode == "chroot") {
-                    chrootRuntime.waitForDesktopReady(desktopEnv)
-                } else {
-                    linuxRuntime.waitForDesktopReady(desktopEnv)
+                val ready = when (sessionMode) {
+                    "chroot" -> chrootRuntime.waitForDesktopReady(desktopEnv)
+                    "proot-kali" -> linuxRuntime.waitForKaliDesktopReady(File(filesDir, "rootfs"))
+                    else -> linuxRuntime.waitForDesktopReady(desktopEnv)
                 }
                 revealDesktop(ready)
             } catch (error: Throwable) {
@@ -652,10 +656,10 @@ class DesktopActivity : Activity() {
 
     private fun waitForDesktopAndReveal() {
         Thread({
-            val ready = if (sessionMode == "chroot") {
-                chrootRuntime.waitForDesktopReady(desktopEnv)
-            } else {
-                linuxRuntime.waitForDesktopReady(desktopEnv)
+            val ready = when (sessionMode) {
+                "chroot" -> chrootRuntime.waitForDesktopReady(desktopEnv)
+                "proot-kali" -> linuxRuntime.waitForKaliDesktopReady(File(filesDir, "rootfs"))
+                else -> linuxRuntime.waitForDesktopReady(desktopEnv)
             }
             revealDesktop(ready)
         }, "LinuxDesktopReady").start()
