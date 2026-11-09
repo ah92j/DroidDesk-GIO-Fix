@@ -65,7 +65,7 @@ class HomeScreen extends StatelessWidget {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('DroidDesk', style: DroidTheme.headingMd),
+                          Text('Kali Linux', style: DroidTheme.headingMd),
                           Text(
                             state.isRunning
                                 ? 'Desktop Environment is running'

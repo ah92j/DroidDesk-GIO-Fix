@@ -445,8 +445,9 @@ class LinuxRuntime(private val context: Context) {
               -w /home/kali \
               /usr/bin/env -i HOME=/home/kali USER=kali LOGNAME=kali \
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-              SHELL=/usr/bin/zsh TERM=xterm-256color LANG=C.UTF-8 DISPLAY=:0 \
-              PULSE_SERVER=tcp:127.0.0.1:4713 XDG_RUNTIME_DIR=/tmp/runtime-kali \
+              SHELL=/usr/bin/zsh TERM=xterm-256color LANG=C.UTF-8 DISPLAY=:0 GDK_BACKEND=x11 \
+              PULSE_SERVER=tcp:127.0.0.1:4713 PULSE_SINK=droiddesk_android PULSE_LATENCY_MSEC=80 \
+              MOZ_DISABLE_CONTENT_SANDBOX=1 XDG_RUNTIME_DIR=/tmp/runtime-kali \
               /usr/bin/sudo -E -u kali /bin/bash --login
             """.trimIndent() + "\n",
         )
@@ -846,6 +847,56 @@ class LinuxRuntime(private val context: Context) {
         }.onFailure { Log.w(TAG, "Kali stale-session cleanup failed", it) }
     }
 
+    /**
+     * Upgrade an existing Kali rootfs in place with the user-facing desktop
+     * additions that cannot be supplied by an APK update alone.
+     */
+    private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
+        val scriptDirectory = File(rootfs, "root/.droiddesk")
+        if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
+            Log.w(TAG, "Could not create the Kali desktop-experience script directory")
+            return false
+        }
+
+        val script = File(scriptDirectory, "desktop-experience.sh")
+        return try {
+            context.assets.open("droiddesk/kali/desktop-experience.sh").use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!script.setExecutable(true, false)) {
+                Log.w(TAG, "Could not mark the Kali desktop-experience script executable")
+                return false
+            }
+
+            val result = runKaliProotCommand(
+                rootfs = rootfs,
+                workingDirectory = "/root",
+                guestCommand = listOf(
+                    "/usr/bin/env", "-i",
+                    "HOME=/root", "USER=root", "LOGNAME=root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "LANG=C.UTF-8", "TERM=dumb", "DEBIAN_FRONTEND=noninteractive",
+                    "BASH_ENV=/dev/null",
+                    "/bin/bash", "/root/.droiddesk/desktop-experience.sh",
+                ),
+                timeoutMinutes = 15,
+                onOutput = { line -> Log.i(TAG, "Kali desktop experience: ${line.trimEnd()}") },
+            )
+            if (result.exitCode != 0) {
+                Log.w(
+                    TAG,
+                    "Kali desktop-experience migration failed (exit ${result.exitCode}): ${result.output.takeLast(1800)}",
+                )
+                false
+            } else {
+                File(rootfs, "root/.droiddesk/desktop-experience-v1").isFile
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
+            false
+        }
+    }
+
     /** Start Kali XFCE through PRoot and DroidDesk's existing X11/audio services. */
     fun startProotKaliSession(rootfs: File, desktopEnv: String = "xfce4") {
         require(desktopEnv == "xfce4") { "Only XFCE is configured for rootless Kali" }
@@ -862,15 +913,31 @@ class LinuxRuntime(private val context: Context) {
                 "Kali's GTK image-loader compatibility repair could not be completed."
             })
         }
+
+        // Apply a one-time compatibility migration to an existing Kali rootfs.
+        // This adds official Kali backgrounds, GVFS Trash support and PulseAudio
+        // client utilities without deleting or reinstalling the user's Kali files.
+        val experienceMarker = File(rootfs, "root/.droiddesk/desktop-experience-v1")
+        val experienceNeedsRefresh = !experienceMarker.isFile
+        val experienceReady = ensureKaliDesktopExperience(rootfs)
+        if (!experienceReady) {
+            Log.w(TAG, "Kali desktop experience migration did not complete; the desktop will still start")
+        }
+        val mustRefreshDesktop = experienceNeedsRefresh && experienceReady
+
         // Android may restart and lose the PRoot Process handle while guest XFCE survives.
         // Reuse only a visually verified desktop; otherwise clean stale processes even if
         // sessionProcess is null, then launch a clean XFCE session.
-        if (isKaliDesktopProcessSetReady(rootfs)) {
+        if (!mustRefreshDesktop && isKaliDesktopProcessSetReady(rootfs)) {
             Log.i(TAG, "Kali XFCE session is visually healthy; reusing the existing desktop")
             return
         }
 
-        Log.w(TAG, "Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart")
+        if (mustRefreshDesktop) {
+            Log.i(TAG, "Refreshing the running Kali desktop once to activate the new wallpapers, GVFS Trash and audio defaults")
+        } else {
+            Log.w(TAG, "Kali XFCE is not visually ready; clearing any orphaned or incomplete session before restart")
+        }
         stopKaliDesktopProcesses(rootfs)
         sessionProcess?.let { stale ->
             runCatching { stale.destroy() }
@@ -943,7 +1010,8 @@ class LinuxRuntime(private val context: Context) {
             "set -Eeuo pipefail",
             "export HOME=/home/kali USER=kali LOGNAME=kali",
             "export DISPLAY=:0 LANG=C.UTF-8 TERM=xterm-256color",
-            "export PULSE_SERVER=tcp:127.0.0.1:4713",
+            "export PULSE_SERVER=tcp:127.0.0.1:4713 PULSE_SINK=droiddesk_android PULSE_LATENCY_MSEC=80",
+            "export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_ENABLE_WAYLAND=0",
             "export XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "export XDG_CONFIG_HOME=/home/kali/.config XDG_CACHE_HOME=/home/kali/.cache",
             "export XDG_DATA_HOME=/home/kali/.local/share XDG_DATA_DIRS=/usr/local/share:/usr/share",
@@ -960,7 +1028,12 @@ class LinuxRuntime(private val context: Context) {
             "chmod 0600 /home/kali/.ICEauthority",
             "touch /home/kali/.local/share/droiddesk/xfce-session.log",
             "unset DBUS_SESSION_BUS_ADDRESS SESSION_MANAGER",
-            "echo \"[DroidDesk Kali] Starting XFCE with private D-Bus, ICE sockets and local GIO VFS...\"",
+            "if command -v pactl >/dev/null 2>&1; then",
+            "  pactl set-default-sink droiddesk_android >/dev/null 2>&1 || true",
+            "  pactl set-sink-mute droiddesk_android 0 >/dev/null 2>&1 || true",
+            "  if pactl info >/dev/null 2>&1; then echo \"[Kali Linux] Android audio bridge is connected\"; else echo \"[Kali Linux] Audio server is not responding yet\"; fi",
+            "fi",
+            "echo \"[Kali Linux] Starting XFCE with private D-Bus, audio and local GIO VFS...\"",
             "cd /home/kali",
             "if [ -x /usr/bin/dbus-run-session ]; then",
             "  exec /usr/bin/dbus-run-session -- /usr/bin/startxfce4 >> /home/kali/.local/share/droiddesk/xfce-session.log 2>&1",
@@ -974,6 +1047,8 @@ class LinuxRuntime(private val context: Context) {
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "SHELL=/usr/bin/zsh", "TERM=xterm-256color", "LANG=C.UTF-8",
             "DISPLAY=:0", "PULSE_SERVER=tcp:127.0.0.1:4713",
+            "PULSE_SINK=droiddesk_android", "PULSE_LATENCY_MSEC=80",
+            "MOZ_DISABLE_CONTENT_SANDBOX=1", "MOZ_ENABLE_WAYLAND=0",
             "XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "XDG_CURRENT_DESKTOP=XFCE", "XDG_SESSION_DESKTOP=xfce", "XDG_SESSION_TYPE=x11",
             "NO_AT_BRIDGE=1", "GTK_A11Y=none", "BASH_ENV=/dev/null",

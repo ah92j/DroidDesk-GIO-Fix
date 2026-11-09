@@ -23,6 +23,7 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizer.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
       - 'app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh'
+      - 'app/android/app/src/main/assets/droiddesk/kali/desktop-experience.sh'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/RootfsArchiveSanitizerTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
@@ -82,6 +83,10 @@ jobs:
           kali_setup_script = Path(
               'app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh'
           ).read_text()
+          desktop_experience_script = Path(
+              'app/android/app/src/main/assets/droiddesk/kali/desktop-experience.sh'
+          ).read_text()
+          home_screen = Path('app/lib/screens/home_screen.dart').read_text()
           gradle_app = Path('app/android/app/build.gradle.kts').read_text()
           audio_output = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
@@ -129,6 +134,10 @@ jobs:
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
+              'PULSE_SINK=droiddesk_android',
+              'PULSE_LATENCY_MSEC=80',
+              'MOZ_DISABLE_CONTENT_SANDBOX=1',
+              'ensureKaliDesktopExperience(rootfs)',
               'gdk-pixbuf-csource --raw --name=droiddesk_png_probe',
               'gdk-pixbuf-csource --raw --name=droiddesk_svg_probe',
               'glycin-thumbnailers',
@@ -413,7 +422,7 @@ jobs:
           if 'sessionMode == "proot-kali" -> 45' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.16+32' not in pubspec:
+          if 'version: 1.4.17+33' not in pubspec:
               missing.append('version: 1.4.16+32')
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
@@ -430,6 +439,20 @@ jobs:
           apt_package_list = kali_setup_script[apt_packages_start:apt_packages_end]
           if 'papirus-icon-theme' in apt_package_list:
               missing.append('keep optional Papirus icon cache generation out of the core Kali install')
+
+          if 'android:label="Kali Linux"' not in manifest:
+              missing.append('Android launcher label must be Kali Linux')
+          if "Text('Kali Linux', style: DroidTheme.headingMd)" not in home_screen:
+              missing.append('home dashboard title must be Kali Linux')
+          for package in ['gvfs', 'gvfs-backends', 'kali-wallpapers-2026', 'pulseaudio-utils', 'libasound2-plugins']:
+              if package not in desktop_experience_script:
+                  missing.append(f'desktop-experience migration must install {package}')
+          if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
+              missing.append('disable expensive Thunar thumbnails for mobile performance')
+          if 'use_compositing' not in desktop_experience_script:
+              missing.append('disable XFCE software compositing for mobile performance')
+          if 'name="image-path"' not in desktop_experience_script:
+              missing.append('expose Kali wallpaper directory in XFCE Desktop Settings')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
@@ -455,6 +478,10 @@ jobs:
           ! grep -Fq 'stty' "$SCRIPT"
           test "$(grep -Fc 'run_apt_transaction() {' "$SCRIPT")" -eq 1
           test "$(grep -Fc 'Package installation and verification completed.' "$SCRIPT")" -eq 1
+
+          EXPERIENCE="app/android/app/src/main/assets/droiddesk/kali/desktop-experience.sh"
+          bash -n "$EXPERIENCE"
+          bash "$EXPERIENCE" --self-test
 
       - name: Validate non-interactive Kali installer shell
         shell: bash
@@ -607,7 +634,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DroidDesk-1.4.16-arm64
+          name: Kali-Linux-1.4.17-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

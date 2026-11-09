@@ -212,6 +212,8 @@ object XfceMobileProfile {
             <property name="wrap_windows" type="bool" value="false"/>
             <property name="easy_click" type="string" value="Alt"/>
             <property name="show_dock_shadow" type="bool" value="false"/>
+            <!-- Disable software-heavy compositing in the Android/PRoot X11 session. -->
+            <property name="use_compositing" type="bool" value="false"/>
           </property>
         </channel>
     """.trimIndent() + "\n"
@@ -369,6 +371,7 @@ object XfceMobileProfile {
                 <property name="workspace0" type="empty">
                   <property name="color-style" type="int" value="0"/>
                   <property name="image-style" type="int" value="5"/>
+                  <property name="image-path" type="string" value="/usr/share/xfce4/backdrops/Kali Linux"/>
                   <property name="last-image" type="string" value="$wallpaperPath"/>
                 </property>
               </property>
