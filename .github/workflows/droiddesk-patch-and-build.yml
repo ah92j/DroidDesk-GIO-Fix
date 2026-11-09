@@ -118,7 +118,10 @@ jobs:
               'fun isKaliDesktopProcessSetReady(rootfs: File): Boolean',
               'private fun stopKaliDesktopProcesses(rootfs: File)',
               'Kali session wrapper is alive but XFCE is incomplete',
-              'pgrep -u kali -x xfce4-session',
+              'pgrep -x xfce4-session',
+              'pgrep -x xfwm4',
+              'pgrep -x xfce4-panel',
+              'pgrep -x xfdesktop',
               'stopKaliDesktopProcesses(rootfs)',
               'File(rootfs, "usr/share/icons/$theme/index.theme").isFile',
               'wallpaperPathInSession = "/home/kali/.local/share/backgrounds/droiddesk-ubuntu-touch.jpg"',
@@ -179,6 +182,10 @@ jobs:
               'val installedDistro = chrootRuntime.getInstalledDistro()',
               'setOf("ubuntu", "kali")',
               '"$installedDistro-chroot"',
+              'kaliHealthCheckInProgress',
+              'KaliDesktopHealthCheck',
+              'linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))',
+              'restartDesktopSession()',
           ]
 
           required_updater = [
@@ -195,6 +202,8 @@ jobs:
           missing.extend(item for item in required_chroot if item not in chroot)
           missing.extend(item for item in required_activity if item not in activity)
           missing.extend(item for item in required_updater if item not in updater)
+          if 'pgrep -u kali' in runtime or 'pkill -TERM -u kali' in runtime or 'pkill -KILL -u kali' in runtime:
+              missing.append('do not filter PRoot process checks by guest UID')
           if 'KaliInstallCoordinator.tryStart()' not in runtime or 'KaliInstallCoordinator.finish(succeeded)' not in runtime:
               missing.append('Kali install single-operation guard')
           shell_name_token = chr(36) + "{'$'}name"
