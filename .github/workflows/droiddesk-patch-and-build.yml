@@ -465,15 +465,17 @@ jobs:
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
           if 'desktop-experience-v7' not in desktop_experience_script or 'desktop-experience-v7' not in runtime:
-              missing.append('use the same v5 desktop migration marker in the script and runtime')
+              missing.append('use the same v7 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
           if 'droiddesk-browser.desktop' not in desktop_experience_script or 'droiddesk-browser' not in profile:
               missing.append('install the direct browser helper')
           if 'GIO_USE_VFS=gvfs' not in runtime:
               missing.append('enable GVFS for Trash')
-          if 'pref("media.rdd-process.enabled", true);' in desktop_experience_script:
+          if '\npref("media.rdd-process.enabled", true);\nuser_pref("media.mediasource.enabled"' in desktop_experience_script:
               missing.append('remove invalid pref() call from Firefox user.js')
+          if 'file' not in desktop_experience_script.split('REQUIRED_PACKAGES=(', 1)[1].split(')', 1)[0]:
+              missing.append('install file utility for AppImage architecture detection')
           if 'user_pref("media.mediasource.webm.audio.enabled", true);' not in desktop_experience_script:
               missing.append('enable explicit Firefox WebM audio/video MSE preferences')
           if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script:
