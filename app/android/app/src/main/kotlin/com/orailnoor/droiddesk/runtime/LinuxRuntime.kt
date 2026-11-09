@@ -466,8 +466,7 @@ class LinuxRuntime(private val context: Context) {
             throw IllegalStateException("Kali user home /home/kali is missing")
         }
 
-        // The native Termux profile lives under files/usr/home and is invisible
-        // to programs running inside this separate PRoot rootfs.
+        // Native Termux profile files live outside the Kali PRoot rootfs.
         if (XfceMobileProfile.needsInstall(kaliHome)) {
             File(kaliHome, ".cache/sessions").deleteRecursively()
         }
@@ -499,7 +498,8 @@ class LinuxRuntime(private val context: Context) {
             "export XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce XDG_SESSION_TYPE=x11",
             "export NO_AT_BRIDGE=1 GTK_A11Y=none",
-            "install -d -m 0700 \"\\$XDG_RUNTIME_DIR\"",
+            "rm -rf /tmp/runtime-kali",
+            "install -d -m 0700 /tmp/runtime-kali",
             "unset DBUS_SESSION_BUS_ADDRESS SESSION_MANAGER",
             "echo \"[DroidDesk Kali] Starting XFCE with the Kali-specific desktop profile...\"",
             "exec /usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4",
@@ -536,27 +536,18 @@ class LinuxRuntime(private val context: Context) {
     }
 
     /**
-     * Check readiness inside Kali's PRoot namespace. The native Termux process
-     * namespace is not a reliable source for XFCE processes launched as Kali.
+     * Check readiness inside Kali's PRoot namespace, not in native Termux.
+     * A partially running desktop is not considered ready without its panel.
      */
     fun waitForKaliDesktopReady(rootfs: File, timeoutSeconds: Int = 50): Boolean {
         val probeScript = listOf(
             "set -u",
             "export DISPLAY=:0",
             "echo \"[DroidDesk Kali] Waiting for XFCE window manager, panel and desktop...\"",
-            "attempt=0",
-            "while [ \"\\$attempt\" -lt $timeoutSeconds ]; do",
-            "  if pgrep -x xfwm4 >/dev/null 2>&1 && pgrep -x xfce4-panel >/dev/null 2>&1 && pgrep -x xfdesktop >/dev/null 2>&1; then",
-            "    echo \"[DroidDesk Kali] XFCE window manager, panel and desktop are ready.\"",
-            "    sleep 1",
-            "    exit 0",
-            "  fi",
-            "  attempt=\\$((attempt + 1))",
-            "  if [ \\$((attempt % 5)) -eq 0 ]; then",
-            "    echo \"[DroidDesk Kali] Still waiting for XFCE processes (\\$attempt/$timeoutSeconds seconds)...\"",
-            "  fi",
-            "  sleep 1",
-            "done",
+            "if timeout " + timeoutSeconds + "s sh -c 'until pgrep -x xfwm4 >/dev/null 2>&1 && pgrep -x xfce4-panel >/dev/null 2>&1 && pgrep -x xfdesktop >/dev/null 2>&1; do sleep 1; done'; then",
+            "  echo \"[DroidDesk Kali] XFCE window manager, panel and desktop are ready.\"",
+            "  exit 0",
+            "fi",
             "echo \"[DroidDesk Kali] XFCE did not become fully ready. Current guest processes:\"",
             "ps -eo pid,comm,args 2>/dev/null | grep -E 'xfce4-session|xfce4-panel|xfdesktop|xfwm4|dbus' | grep -v grep || true",
             "exit 1",
