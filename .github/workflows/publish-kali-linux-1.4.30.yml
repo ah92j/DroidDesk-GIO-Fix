@@ -1,0 +1,100 @@
+name: Publish Kali Linux 1.4.30 APK and GitHub Release
+
+on:
+  workflow_run:
+    workflows:
+      - DroidDesk Permanent Release Build
+    types:
+      - completed
+    branches:
+      - security/hardening-phase-1
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '1883a28709941342784ae905a9715ede3a37df40' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify the signed ARM64 APK artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DIR="$RUNNER_TEMP/kali-linux-apk"
+          mkdir -p "$DOWNLOAD_DIR"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo ah92j/DroidDesk-GIO-Fix \
+            --name Kali-Linux-1.4.30-arm64 \
+            --dir "$DOWNLOAD_DIR"
+
+          APK="$(find "$DOWNLOAD_DIR" -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          test -s "$APK"
+          APK_SIZE="$(stat -c '%s' "$APK")"
+          if [ "$APK_SIZE" -lt 30000000 ] || [ "$APK_SIZE" -gt 120000000 ]; then
+            echo "Unexpected APK size: $APK_SIZE"
+            exit 1
+          fi
+          cp "$APK" Kali-Linux-1.4.30-arm64.apk
+          echo "APK SHA-256:"
+          sha256sum Kali-Linux-1.4.30-arm64.apk
+
+      - name: Publish stable direct APK URL while retaining previous releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FILE_NAME="Kali-Linux-1.4.30-arm64.apk"
+          PUBLISH_DIR="$RUNNER_TEMP/apk-downloads"
+          git clone --depth=1 --single-branch --branch apk-downloads \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH_DIR"
+          cp "$FILE_NAME" "$PUBLISH_DIR/$FILE_NAME"
+          git -C "$PUBLISH_DIR" config user.name "github-actions[bot]"
+          git -C "$PUBLISH_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$PUBLISH_DIR" add "$FILE_NAME"
+          git -C "$PUBLISH_DIR" commit -m "Publish Kali Linux 1.4.30 ARM64 APK"
+          git -C "$PUBLISH_DIR" push origin HEAD:apk-downloads
+          echo "Stable APK URL:"
+          echo "https://raw.githubusercontent.com/ah92j/DroidDesk-GIO-Fix/apk-downloads/$FILE_NAME"
+
+      - name: Publish APK as the latest GitHub Release for in-app updates
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v1.4.30+47"
+          FILE_NAME="Kali-Linux-1.4.30-arm64.apk"
+          TITLE="Kali Linux 1.4.30"
+          NOTES="$(cat <<'RELEASE_NOTES'
+          DroidDesk 1.4.30+47 for Android ARM64.
+
+          - Repairs App Store APT command construction so every Kali package install receives the Kotlin-selected install/upgrade action instead of an unset Bash variable.
+          - Adds verified official Kali HTTPS mirror failover for application catalog refresh and package installs. It tries the configured mirror, kali.download, then archive.kali.org, and accepts a mirror only after a complete ARM64 package index is present.
+          - Preserves the active verified Kali mirror in DroidDesk's dedicated Kali source file so the subsequent package install uses the same working mirror.
+          - Fixes Firefox's RDD/media child-process library search path by adding /usr/lib/firefox-esr to LD_LIBRARY_PATH.
+          - Selects Firefox's libavcodec-extra package using the FFmpeg ABI actually installed in Kali, rather than accidentally choosing an older ABI from the recommendation list.
+          - Adds launch-time dependency diagnostics for libmozavcodec.so, the Firefox FFmpeg backend, PulseAudio and the active codec libraries.
+          - Applies the desktop-experience-v14 migration to an existing Kali rootfs while preserving installed packages, user files and XFCE preferences. It does not reset or reinstall Kali.
+
+          GitHub Actions verifies source assertions, Kali shell syntax and self-tests, Kotlin/rootfs tests, ARM64 APK build and the permanent release signing certificate. Actual YouTube video/audio playback and successful App Store installs still require confirmation on the target phone; a successful build is not represented as proof of device playback.
+
+          RELEASE_NOTES          )"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" "$FILE_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target main \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --latest
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,assets
