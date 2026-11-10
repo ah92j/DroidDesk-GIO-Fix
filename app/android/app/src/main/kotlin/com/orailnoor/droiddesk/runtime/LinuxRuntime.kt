@@ -3026,7 +3026,7 @@ class LinuxRuntime(private val context: Context) {
             if (!line.contains("[upgradable from:")) return@mapNotNull null
             val name = line.substringBefore('/').trim()
             if (!isSafePackageName(name) || isKaliStoreProtectedPackage(name)) return@mapNotNull null
-            val newVersion = line.substringAfter('/').split(' ').getOrNull(1).orEmpty()
+            val newVersion = line.substringAfter('/').trim().substringBefore(' ')
             val current = line.substringAfter("upgradable from: ").substringBefore(']').trim()
             val record = installed[name]
             mapOf(
