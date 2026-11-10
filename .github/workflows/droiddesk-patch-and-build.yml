@@ -160,7 +160,6 @@ jobs:
               'desktop-experience-v17',
               'private fun ensureKaliApplicationsMenu(rootfs: File): Boolean',
               'droiddesk/kali/ensure-applications-menu.sh',
-              'xfce-applications-menu-v1',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
