@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '205bd9656d593e62cb97d6023f624aa308a32245' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '66104ffe5d57ed05f83d4c857d4ba93f0c24d1d2' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download and verify the signed ARM64 APK artifact
