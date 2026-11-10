@@ -141,7 +141,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v11',
+              'desktop-experience-v12',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -513,7 +513,7 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v11' not in desktop_experience_script or 'desktop-experience-v11' not in runtime:
+          if 'desktop-experience-v12' not in desktop_experience_script or 'desktop-experience-v12' not in runtime:
               missing.append('use the same v8 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')

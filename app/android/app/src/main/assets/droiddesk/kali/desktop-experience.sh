@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v11"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v12"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -22,7 +22,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-2026' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v11" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v12" ]]
   grep -q 'apt-cache depends firefox-esr' "$0"
   grep -q 'libavcodec-extra' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
