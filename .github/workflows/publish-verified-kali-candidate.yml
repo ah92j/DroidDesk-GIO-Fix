@@ -52,9 +52,9 @@ jobs:
           CHECKSUM="$APK.sha256"
           TITLE="Kali Linux 1.4.33 (device-test candidate)"
           NOTES="Verified device-test candidate. Includes the native Applications menu on the bottom XFCE panel, shortcut synchronization for previously installed applications, ARM64 Firefox media/codec repairs, safer X11 reconnect on desktop return, legacy drawing compatibility, and in-app prerelease update discovery. Built and signed with the permanent DroidDesk release key; existing Kali rootfs data is preserved."
-          gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
-          gh release edit "$RELEASE_TAG" --title "$TITLE" --prerelease --notes "$NOTES"
-          ASSET_SIZE="$(gh release view "$RELEASE_TAG" --json assets -q '.assets[] | select(.name == "Kali-Linux-1.4.33-arm64.apk") | .size')"
+          gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$RELEASE_TAG" --title "$TITLE" --prerelease --notes "$NOTES" --repo "$GITHUB_REPOSITORY"
+          ASSET_SIZE="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[] | select(.name == "Kali-Linux-1.4.33-arm64.apk") | .size')"
           EXPECTED_SIZE="$(stat -c%s "$APK")"
           test "$ASSET_SIZE" = "$EXPECTED_SIZE"
-          gh release view "$RELEASE_TAG" --json tagName,isPrerelease,assets
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease,assets
