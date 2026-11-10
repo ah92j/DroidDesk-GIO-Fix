@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == 'PENDING-FINAL-DESKTOP-MIGRATION' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '189a8c5c8b72ebd18e6c7e4ce8efef5398451348' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download and verify the signed ARM64 APK artifact
