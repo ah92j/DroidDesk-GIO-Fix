@@ -465,6 +465,10 @@ diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
     /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
 } > "$diagnostic_file" 2>&1
 chmod 0644 "$diagnostic_file" 2>/dev/null || true
+  install -d -m 0755 /home/kali/Desktop
+  cp -f "$diagnostic_file" /home/kali/Desktop/Firefox-Media-Diagnostic.txt
+  chmod 0644 /home/kali/Desktop/Firefox-Media-Diagnostic.txt
+  chown kali:kali /home/kali/Desktop/Firefox-Media-Diagnostic.txt 2>/dev/null || true
 
 echo "[DroidDesk Audio] Firefox launch diagnostics: $firefox_log"
 echo "[DroidDesk Media] Fresh media diagnostics: $diagnostic_file"
@@ -1511,6 +1515,10 @@ diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
     /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
 } > "$diagnostic_file" 2>&1
 chmod 0644 "$diagnostic_file" 2>/dev/null || true
+  install -d -m 0755 /home/kali/Desktop
+  cp -f "$diagnostic_file" /home/kali/Desktop/Firefox-Media-Diagnostic.txt
+  chmod 0644 /home/kali/Desktop/Firefox-Media-Diagnostic.txt
+  chown kali:kali /home/kali/Desktop/Firefox-Media-Diagnostic.txt 2>/dev/null || true
 
 echo "[DroidDesk Audio] Firefox launch diagnostics: $firefox_log"
 echo "[DroidDesk Media] Fresh media diagnostics: $diagnostic_file"
@@ -2556,6 +2564,10 @@ diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
     /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
 } > "$diagnostic_file" 2>&1
 chmod 0644 "$diagnostic_file" 2>/dev/null || true
+  install -d -m 0755 /home/kali/Desktop
+  cp -f "$diagnostic_file" /home/kali/Desktop/Firefox-Media-Diagnostic.txt
+  chmod 0644 /home/kali/Desktop/Firefox-Media-Diagnostic.txt
+  chown kali:kali /home/kali/Desktop/Firefox-Media-Diagnostic.txt 2>/dev/null || true
 
 echo "[DroidDesk Audio] Firefox launch diagnostics: $firefox_log"
 echo "[DroidDesk Media] Fresh media diagnostics: $diagnostic_file"

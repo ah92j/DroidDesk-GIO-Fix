@@ -596,8 +596,10 @@ jobs:
               missing.append('set the dock panel to transparent RGBA style')
           if 'desktop-experience-v17' not in desktop_experience_script or 'desktop-experience-v17' not in runtime:
               missing.append('use the same v17 desktop migration marker in the script and runtime')
-          if 'ensureKaliApplicationsMenu(rootfs)' not in runtime or 'xfce-applications-menu-v1' not in runtime:
+          if 'ensureKaliApplicationsMenu(rootfs)' not in runtime or 'droiddesk/kali/ensure-applications-menu.sh' not in runtime:
               missing.append('retry XFCE Applications menu independently from the APT-heavy desktop migration')
+          if 'xfce-applications-menu-v1' not in applications_menu_script or 'int[[:space:]]+)?([0-9]+' not in applications_menu_script:
+              missing.append('standalone Applications menu helper must parse xfconf integer-array output')
           if 'Firefox-Media-Diagnostic.txt' not in desktop_experience_script:
               missing.append('copy Firefox codec and PulseAudio diagnostics to the Kali Desktop')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
