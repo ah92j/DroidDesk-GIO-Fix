@@ -47,6 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          KNOWN_VERIFIED_SHA256="e9e745321488b8e81c832e4c5f51fe5210e79a70f4354cbd6cd011eea787e934"
           RELEASE_TAG="v1.4.33+50"
           APK="candidate/Kali-Linux-1.4.33-arm64.apk"
           CHECKSUM="$APK.sha256"
