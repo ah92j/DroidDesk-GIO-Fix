@@ -90,6 +90,134 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       DroidTheme.primaryLight,
       iconNames: ['display-im6.q16'],
     ),
+    _FeaturedApp(
+      'chromium',
+      'Chromium',
+      'Open-source web browser for a second browser option.',
+      Icons.language_rounded,
+      Color(0xFF4285F4),
+      iconNames: ['chromium'],
+    ),
+    _FeaturedApp(
+      'thunderbird',
+      'Thunderbird',
+      'Email, calendars and contacts in one desktop app.',
+      Icons.mail_outline_rounded,
+      Color(0xFF168DE2),
+      iconNames: ['thunderbird'],
+    ),
+    _FeaturedApp(
+      'filezilla',
+      'FileZilla',
+      'Transfer and manage files on remote servers.',
+      Icons.folder_shared_rounded,
+      Color(0xFFB3C7E6),
+      iconNames: ['filezilla'],
+    ),
+    _FeaturedApp(
+      'geany',
+      'Geany',
+      'Lightweight code editor for many programming languages.',
+      Icons.code_rounded,
+      Color(0xFF56A86B),
+      iconNames: ['geany'],
+    ),
+    _FeaturedApp(
+      'inkscape',
+      'Inkscape',
+      'Create and edit vector graphics.',
+      Icons.draw_rounded,
+      Color(0xFF7D66A8),
+      iconNames: ['inkscape'],
+    ),
+    _FeaturedApp(
+      'audacity',
+      'Audacity',
+      'Record and edit audio projects.',
+      Icons.graphic_eq_rounded,
+      Color(0xFF2E9D89),
+      iconNames: ['audacity'],
+    ),
+    _FeaturedApp(
+      'mpv',
+      'MPV Player',
+      'Lightweight desktop video player.',
+      Icons.movie_rounded,
+      Color(0xFF50A090),
+      iconNames: ['mpv'],
+    ),
+    _FeaturedApp(
+      'evince',
+      'Document Viewer',
+      'Read PDF and other document formats.',
+      Icons.picture_as_pdf_rounded,
+      Color(0xFFE05A5A),
+      iconNames: ['evince'],
+    ),
+    _FeaturedApp(
+      'htop',
+      'Htop',
+      'Monitor running processes and system resources.',
+      Icons.monitor_heart_rounded,
+      Color(0xFF42A5F5),
+      iconNames: ['htop'],
+    ),
+    _FeaturedApp(
+      'btop',
+      'Btop',
+      'Visual CPU, memory, disk and process monitor.',
+      Icons.bar_chart_rounded,
+      Color(0xFF8B79CE),
+      iconNames: ['btop'],
+    ),
+    _FeaturedApp(
+      'fastfetch',
+      'Fastfetch',
+      'Show system and hardware information in Terminal.',
+      Icons.info_outline_rounded,
+      Color(0xFF58A6A6),
+      iconNames: [],
+    ),
+    _FeaturedApp(
+      'git',
+      'Git',
+      'Version control for managing source code.',
+      Icons.merge_type_rounded,
+      Color(0xFFE96B45),
+      iconNames: [],
+    ),
+    _FeaturedApp(
+      'python3-pip',
+      'Python pip',
+      'Install and manage Python packages.',
+      Icons.inventory_2_rounded,
+      Color(0xFF3974A8),
+      iconNames: [],
+    ),
+    _FeaturedApp(
+      'tmux',
+      'Tmux',
+      'Keep multiple Terminal sessions organized.',
+      Icons.terminal_rounded,
+      Color(0xFF6B9E75),
+      iconNames: [],
+    ),
+    _FeaturedApp(
+      'zsh',
+      'Zsh',
+      'An alternative shell with customization support.',
+      Icons.code_rounded,
+      Color(0xFFDAAB45),
+      iconNames: [],
+    ),
+    _FeaturedApp(
+      'kali-tweaks',
+      'Kali Tweaks',
+      'Configure Kali desktop and common system options.',
+      Icons.tune_rounded,
+      Color(0xFF4B76A8),
+      iconNames: [],
+    ),
   ];
 
   int _tab = 0;
@@ -162,14 +290,27 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     }
   }
 
+  String _resolvedPackageName(String packageName) => switch (packageName) {
+        'firefox' => 'firefox-esr',
+        'python' => 'python3',
+        _ => packageName,
+      };
+
+  bool _isInstalledName(String packageName) =>
+      _installedNames.contains(packageName) ||
+      _installedNames.contains(_resolvedPackageName(packageName));
+
   _FeaturedApp? _featuredFor(String packageName) {
     for (final app in _featured) {
-      if (app.packageName == packageName) return app;
+      if (app.packageName == packageName ||
+          _resolvedPackageName(app.packageName) == packageName) {
+        return app;
+      }
     }
     return null;
   }
 
-  Future<void> _install(String packageName) async {
+  Future<bool> _install(String packageName) async {
     final featured = _featuredFor(packageName);
     final ok = await context.read<AppState>().installPackage(
       packageName,
@@ -177,8 +318,9 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
       iconNames: featured?.iconNames ?? const [],
     );
     await _loadInstalled();
-    if (!mounted) return;
+    if (!mounted) return ok;
     _showResultSnack(ok);
+    return ok;
   }
 
   /// Shows the outcome of the operation that just finished in AppState (once).
@@ -269,8 +411,8 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   }
 
   Future<void> _updateOne(_PackageItem package) async {
-    await _install(package.name);
-    if (!mounted) return;
+    final ok = await _install(package.name);
+    if (!mounted || !ok) return;
     setState(() => _updates = _updates.where((p) => p.name != package.name).toList());
   }
 
@@ -706,6 +848,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     final color = featured?.color ?? _categoryColor(package.section);
     final meta = [
       if (package.version.isNotEmpty) package.version,
+      if (package.architecture.isNotEmpty) package.architecture.toUpperCase(),
       package.gui ? 'GUI app' : package.section,
     ].where((e) => e.isNotEmpty).join(' · ');
     return Padding(
@@ -971,6 +1114,7 @@ class _PackageItem {
   final String description;
   final String version;
   final String currentVersion;
+  final String architecture;
   final String section;
   final bool installed;
   final bool gui;
@@ -981,6 +1125,7 @@ class _PackageItem {
     this.description = '',
     this.version = '',
     this.currentVersion = '',
+    this.architecture = '',
     this.section = 'System',
     this.installed = false,
     this.gui = false,
@@ -992,6 +1137,7 @@ class _PackageItem {
     description: map['description']?.toString() ?? '',
     version: map['version']?.toString() ?? '',
     currentVersion: map['currentVersion']?.toString() ?? '',
+    architecture: map['architecture']?.toString() ?? '',
     section: map['section']?.toString() ?? 'System',
     installed: map['installed'] == true,
     gui: map['gui'] == true,
