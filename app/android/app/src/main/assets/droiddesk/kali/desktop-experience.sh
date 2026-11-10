@@ -7,14 +7,14 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v8"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v9"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
   kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
   ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
-  gdebi zenity desktop-file-utils xdg-utils curl gnupg file
+  gdebi zenity desktop-file-utils xdg-utils curl gnupg file tar
 )
 
 if [[ "${1:-}" == "--self-test" ]]; then
@@ -22,7 +22,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v8" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v9" ]]
   grep -Fq 'codec_package="libavcodec-extra$codec_abi"' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
   grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
@@ -56,6 +56,42 @@ for package in "${REQUIRED_PACKAGES[@]}"; do
   fi
 done
 
+# Preserve custom wallpaper, panel/dock settings and desktop icon positions on upgrade.
+PRESERVE_DIR="$(mktemp -d /tmp/droiddesk-xfce-preserve.XXXXXX)"
+PRESERVE_ARCHIVE="$PRESERVE_DIR/user-xfce-settings.tar"
+PRESERVE_TEMP="$PRESERVE_DIR/user-xfce-settings.tmp"
+PRESERVE_READY=0
+PRESERVE_ITEMS=()
+for item in \
+  .config/xfce4/xfconf/xfce-perchannel-xml \
+  .config/xfce4/desktop \
+  .config/xfce4/panel; do
+  if [[ -e "/home/kali/$item" ]]; then
+    PRESERVE_ITEMS+=("$item")
+  fi
+done
+restore_user_xfce_preferences() {
+  if ((PRESERVE_READY == 1)) && [[ -s "$PRESERVE_ARCHIVE" ]]; then
+    if tar -xf "$PRESERVE_ARCHIVE" -C /home/kali; then
+      chown -R kali:kali /home/kali/.config/xfce4 2>/dev/null || true
+      echo "[Kali Linux] Restored the user's wallpaper, dock and desktop icon layout."
+    else
+      echo "[Kali Linux] WARNING: saved XFCE preferences could not be restored."
+    fi
+  fi
+  rm -rf "$PRESERVE_DIR"
+}
+trap restore_user_xfce_preferences EXIT
+if ((${#PRESERVE_ITEMS[@]} > 0)); then
+  if tar -cf "$PRESERVE_TEMP" -C /home/kali "${PRESERVE_ITEMS[@]}"; then
+    mv "$PRESERVE_TEMP" "$PRESERVE_ARCHIVE"
+    PRESERVE_READY=1
+    echo "[Kali Linux] Saved existing wallpaper, panel settings and desktop icon positions."
+  else
+    echo "[Kali Linux] WARNING: could not snapshot XFCE settings; migration will not replace existing files."
+  fi
+fi
+
 # Refresh Firefox ESR and install its currently recommended FFmpeg ABI.
 echo "[Kali Linux] Refreshing Firefox ESR and its matching FFmpeg codec recommendation..."
 apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=45 -o Dpkg::Use-Pty=0 update
@@ -72,18 +108,24 @@ codec_abi="$(ldconfig -p 2>/dev/null |
   sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
   sort -rn | head -n1)"
 if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
-  codec_package="libavcodec-extra$codec_abi"
-  if apt-cache show "$codec_package" 2>/dev/null |
-     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted) found=1 } END { exit !found }'; then
-    echo "[Kali Linux] Installing only the matching ARM64 FFmpeg ABI package: $codec_package"
+  codec_package=""
+  for candidate in "libavcodec-extra$codec_abi" "libavcodec$codec_abi"; do
+    if apt-cache show "$candidate" 2>/dev/null |
+       awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted) found=1 } END { exit !found }'; then
+      codec_package="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$codec_package" ]]; then
+    echo "[Kali Linux] Installing the matching ARM64 Firefox FFmpeg ABI package: $codec_package"
     apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
       -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
       install -y --no-install-recommends "$codec_package"
   else
-    echo "[Kali Linux] No ARM64 codec package found for installed libavcodec ABI $codec_abi."
+    echo "[Kali Linux] No ARM64 libavcodec package exists for ABI $codec_abi; bundled VP9/Opus decoders remain enabled."
   fi
 else
-  echo "[Kali Linux] Could not detect an installed libavcodec ABI; keeping Firefox's bundled VP9/Opus decoders enabled."
+  echo "[Kali Linux] Could not detect the installed libavcodec ABI; bundled VP9/Opus decoders remain enabled."
 fi
 
 # Install Google Chrome ARM64 from Google's signed repository first.
@@ -219,8 +261,8 @@ FIREFOX_DESKTOP
   chmod 0755 /home/kali/.local/share/applications/droiddesk-firefox.desktop /home/kali/Desktop/Firefox.desktop
 fi
 
-# Prefer the system FFmpeg decoder for VP8/VP9 and disable unsupported GPU/VA-API
-# paths in PRoot. Keep Firefox's normal RDD process enabled.
+# Android PRoot cannot reliably start Firefox's separate RDD media process.
+# Route software decoding through Firefox's content process; keep GPU/VA-API off.
 for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
   pref_dir="$firefox_root/defaults/pref"
   if [[ -d "$pref_dir" ]]; then
@@ -228,8 +270,9 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
 pref("media.cubeb.sandbox", false);
 pref("media.cubeb.backend", "pulse");
 pref("media.ffmpeg.enabled", true);
-pref("media.rdd-ffmpeg.enabled", true);
+pref("media.rdd-ffmpeg.enabled", false);
 pref("media.ffvpx.enabled", true);
+pref("media.rdd-process.enabled", false);
 pref("media.av1.enabled", false);
 pref("media.ffmpeg.vaapi.enabled", false);
 pref("media.hardware-video-decoding.enabled", false);
@@ -260,12 +303,12 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
 user_pref("media.cubeb.sandbox", false);
 user_pref("media.cubeb.backend", "pulse");
 user_pref("media.ffmpeg.enabled", true);
-user_pref("media.rdd-ffmpeg.enabled", true);
+user_pref("media.rdd-ffmpeg.enabled", false);
 user_pref("media.ffvpx.enabled", true);
 user_pref("media.av1.enabled", false);
 user_pref("media.ffmpeg.vaapi.enabled", false);
 user_pref("media.hardware-video-decoding.enabled", false);
-user_pref("media.rdd-process.enabled", true);
+user_pref("media.rdd-process.enabled", false);
 user_pref("media.mediasource.enabled", true);
 user_pref("media.mediasource.webm.enabled", true);
 user_pref("media.mediasource.webm.audio.enabled", true);
@@ -298,6 +341,14 @@ diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
   ffmpeg -hide_banner -decoders 2>/dev/null | grep -E ' (aac|h264|vp8|vp9|opus) ' || true
   echo "=== Firefox codec backend ==="
   find /usr/lib/firefox-esr /usr/lib/firefox -maxdepth 2 -name 'libmozavcodec.so' -type f -print 2>/dev/null || true
+  echo "=== Firefox shared-library resolution ==="
+  if [[ -f /usr/lib/firefox-esr/libxul.so ]]; then
+    ldd /usr/lib/firefox-esr/libxul.so 2>&1 | grep -E 'not found|libavcodec|libavutil' || true
+  fi
+  echo "=== Active DroidDesk media preferences ==="
+  grep -hE 'media\.(rdd-process|rdd-ffmpeg|ffvpx|ffmpeg|mediasource|webm|av1)' \
+    /usr/lib/firefox-esr/defaults/pref/droiddesk-media.js \
+    /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
 } > "$diagnostic_file"
 chmod 0644 "$diagnostic_file"
 
@@ -441,7 +492,9 @@ case "$lower_file" in
       fi
       show_failure "This download is $deb_arch, but Kali requires $host_arch.
 I checked the configured Kali repositories for an ARM64 replacement of $deb_name.
-No compatible package could be installed automatically. The original x86_64 file was not installed."
+No compatible ARM64 package was found, so the AMD64 file was not installed.
+Open Add applications > Featured or Browse to install a compatible package from Kali's ARM64 repositories.
+If this application is not listed there, its publisher may not provide an ARM64 Linux build."
       exit 3
     fi
 

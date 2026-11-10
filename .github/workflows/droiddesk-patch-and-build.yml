@@ -141,7 +141,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v8',
+              'desktop-experience-v9',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -440,8 +440,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.25+42' not in pubspec:
-              missing.append('expected release version 1.4.25+42')
+          if 'version: 1.4.26+43' not in pubspec:
+              missing.append('expected release version 1.4.26+43')
           if "static const repo = 'ah92j/DroidDesk-GIO-Fix';" not in update_service:
               missing.append('updater must check releases from the APK publishing repository')
           if "libavcodec\\.so\\.\\(" not in desktop_experience_script or "if ($2 == wanted) found=1" not in desktop_experience_script:
@@ -454,6 +454,10 @@ jobs:
               missing.append('show a direct APK download link in the update prompt')
           if "firefox-esr" not in app_catalog or "chromium" not in app_catalog or "thunderbird" not in app_catalog:
               missing.append('include core ARM64 desktop applications in Featured')
+          if "labels: const ['Featured', 'Browse', 'Updates', 'Installed']" not in app_catalog:
+              missing.append('provide Featured, Browse, Updates and Installed sections')
+          if '_isInstalledName(app.packageName)' not in app_catalog:
+              missing.append('recognize Firefox ESR as the installed Firefox app')
           if "Future<bool> _install" not in app_catalog or "install --only-upgrade" not in runtime:
               missing.append('per-app Updates must upgrade installed Kali packages')
           if 'fun searchKaliPackages(rootfs: File' not in runtime or 'fun installKaliStorePackage(' not in runtime:
@@ -492,7 +496,7 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v8' not in desktop_experience_script or 'desktop-experience-v8' not in runtime:
+          if 'desktop-experience-v9' not in desktop_experience_script or 'desktop-experience-v9' not in runtime:
               missing.append('use the same v8 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
@@ -507,7 +511,7 @@ jobs:
               missing.append('install file utility for AppImage architecture detection')
           if 'user_pref("media.mediasource.webm.audio.enabled", true);' not in desktop_experience_script:
               missing.append('enable explicit Firefox WebM audio/video MSE preferences')
-          if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script:
+          if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", false' not in desktop_experience_script:
               missing.append('enable Firefox software VP8/VP9 fallback, RDD and disable unsupported AV1')
           if 'apt-get --install-recommends' not in desktop_experience_script or 'install -y --reinstall firefox-esr' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
               missing.append('install the matching ARM64 FFmpeg codec ABI and disable incompatible RDD sandbox in PRoot')
@@ -524,6 +528,16 @@ jobs:
               missing.append('never overwrite the selected wallpaper or dock style during desktop refresh')
           if 'name="image-path"' not in desktop_experience_script:
               missing.append('expose Kali wallpaper directory in XFCE Desktop Settings')
+          if 'PRESERVE_ARCHIVE' not in desktop_experience_script or 'restore_user_xfce_preferences' not in desktop_experience_script:
+              missing.append('snapshot and restore user XFCE settings on app upgrade')
+          if '.config/xfce4/desktop' not in desktop_experience_script or '.config/xfce4/panel' not in desktop_experience_script:
+              missing.append('preserve desktop icon positions and dock/panel layout')
+          if 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'libavcodec$codec_abi' not in desktop_experience_script:
+              missing.append('support both ARM64 FFmpeg codec package names')
+          if 'user_pref("media.rdd-process.enabled", false);' not in desktop_experience_script:
+              missing.append('apply Firefox PRoot software-decoder fallback')
+          if 'Open Add applications > Featured or Browse' not in desktop_experience_script:
+              missing.append('guide users away from incompatible AMD64 downloads')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
               missing.append('remove unnecessary QUERY_ALL_PACKAGES permission')
@@ -705,7 +719,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.25-arm64
+          name: Kali-Linux-1.4.26-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

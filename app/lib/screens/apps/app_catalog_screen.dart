@@ -492,7 +492,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
           description: app.description,
           installed: app.optional
               ? state.optionalApps[app.packageName] == true
-              : _installedNames.contains(app.packageName),
+              : _isInstalledName(app.packageName),
         );
     Future<void> Function()? installerFor(_FeaturedApp app) => app.optional
         ? () => state.installOptionalApp(app.packageName)
