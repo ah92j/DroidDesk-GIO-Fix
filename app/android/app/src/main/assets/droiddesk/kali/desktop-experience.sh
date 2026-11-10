@@ -23,7 +23,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
   [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v8" ]]
-  grep -Fq 'codec_package="libavcodec-extra$abi"' "$0"
+  grep -Fq 'codec_package="libavcodec-extra$codec_abi"' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
   grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
   grep -q "Preserve existing XFCE preferences" "$0"
@@ -68,21 +68,22 @@ fi
 # Firefox's FFmpeg backend must find the matching ARM64 codec ABI. Kali Rolling
 # currently publishes ABI 62 and 63; detect the available package instead of
 # assuming one fixed FFmpeg generation or downloading an x86_64 codec library.
-codec_packages=()
-for abi in 62 63; do
-  codec_package="libavcodec-extra$abi"
+codec_abi="$(ldconfig -p 2>/dev/null |
+  sed -n 's/^[[:space:]]*libavcodec\\.so\\.\\([0-9][0-9]*\\) .*/\\1/p' |
+  sort -rn | head -n1)"
+if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
+  codec_package="libavcodec-extra$codec_abi"
   if apt-cache show "$codec_package" 2>/dev/null |
-     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted) found=1 } END { exit !found }'; then
-    codec_packages+=("$codec_package")
+     awk -v wanted="arm64" '/^Architecture:/ { if (\$2 == wanted) found=1 } END { exit !found }'; then
+    echo "[Kali Linux] Installing only the matching ARM64 FFmpeg ABI package: $codec_package"
+    apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
+      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      install -y --no-install-recommends "$codec_package"
+  else
+    echo "[Kali Linux] No ARM64 codec package found for installed libavcodec ABI $codec_abi."
   fi
-done
-if (("${#codec_packages[@]}" > 0)); then
-  echo "[Kali Linux] Installing matching ARM64 FFmpeg codec ABI packages: ${codec_packages[*]}"
-  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
-    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-    install -y --no-install-recommends "${codec_packages[@]}"
 else
-  echo "[Kali Linux] No optional FFmpeg ABI package candidate was found; recording the system decoder state."
+  echo "[Kali Linux] Could not detect an installed libavcodec ABI; keeping Firefox's bundled VP9/Opus decoders enabled."
 fi
 
 # Install Google Chrome ARM64 from Google's signed repository first.
