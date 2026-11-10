@@ -844,9 +844,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "v1.4.33+50" \
-            "app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk" \
-            "app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk.sha256" \
-            --title "Kali Linux 1.4.33 (device-test candidate)" \
-            --prerelease \
-            --notes "Device-test candidate. Adds a native Applications menu to the bottom XFCE panel, syncs shortcuts for previously installed apps, repairs ARM64 Firefox codec selection, prevents destructive session restarts on Android screen return, adds bounded X11 reconnection and legacy drawing compatibility, and enables in-app prerelease updates. Preserves the permanent signing certificate and Kali rootfs data."
+          RELEASE_TAG="v1.4.33+50"
+          APK="app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk"
+          CHECKSUM="$APK.sha256"
+          TITLE="Kali Linux 1.4.33 (device-test candidate)"
+          NOTES="Device-test candidate. Adds a native Applications menu to the bottom XFCE panel, syncs shortcuts for previously installed apps, repairs ARM64 Firefox codec selection, prevents destructive session restarts on Android screen return, adds bounded X11 reconnection and legacy drawing compatibility, and enables in-app prerelease updates. Preserves the permanent signing certificate and Kali rootfs data."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
+            gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
+            gh release edit "$RELEASE_TAG" --title "$TITLE" --prerelease --notes "$NOTES"
+          else
+            gh release create "$RELEASE_TAG" "$APK" "$CHECKSUM" \
+              --title "$TITLE" \
+              --prerelease \
+              --notes "$NOTES"
+          fi
+          gh release view "$RELEASE_TAG" --json tagName,isPrerelease,assets
