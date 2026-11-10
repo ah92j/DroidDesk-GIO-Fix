@@ -790,8 +790,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "v1.4.31+48" \\
-            "app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk" \\
-            "app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk.sha256" \\
-            --title "Kali Linux 1.4.31" \\
+          gh release create "v1.4.31+48" \
+            "app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk" \
+            "app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk.sha256" \
+            --title "Kali Linux 1.4.31" \
             --notes "Fixes false App Store install failures for packages already installed. Separates Get from per-package Updates, reuses valid Kali ARM64 indexes, and accepts cached ARM64 indexes when APT reports an InRelease cache hit. Keeps the permanent APK signing certificate and existing Kali rootfs data."

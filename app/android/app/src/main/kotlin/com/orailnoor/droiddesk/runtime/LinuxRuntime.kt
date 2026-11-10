@@ -3094,7 +3094,7 @@ refresh_kali_indexes() {
 
         // A normal Get request is idempotent: an installed ARM64 package is already a success.
         val alreadyInstalledForArm64 = kaliInstalledPackageRecords(rootfs).any {
-            it["name"] == selected && it["architecture"] in setOf("arm64", "all")
+            it["name"] == selected && (it["architecture"] as? String) in setOf("arm64", "all")
         }
         if (!upgradeOnly && alreadyInstalledForArm64) {
             onProgress(1.0, "$selected is already installed for ARM64.")
@@ -3231,7 +3231,7 @@ POLICY
         onProgress(0.28, if (upgradeOnly) "Updating $selected for ARM64..." else "Installing $selected for ARM64...")
         val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 40, onProgress = onProgress)
         val installedForArm64 = kaliInstalledPackageRecords(rootfs).any {
-            it["name"] == selected && it["architecture"] in setOf("arm64", "all")
+            it["name"] == selected && (it["architecture"] as? String) in setOf("arm64", "all")
         }
         // For a fresh install, dpkg's final installed state is authoritative even if a
         // post-install maintenance step returned non-zero. A requested upgrade must exit cleanly.
