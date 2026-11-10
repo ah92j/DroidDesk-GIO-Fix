@@ -541,7 +541,8 @@ jobs:
           if 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' not in desktop_experience_script:
               missing.append('make Firefox bundled libraries visible to RDD/media child processes')
           if 'libavcodec-extra' not in desktop_experience_script:
-              missing.append('prefer Firefox additional FFmpeg codec ABI over the basic package')          if 'codec_abi="$(ldconfig -p' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script:
+              missing.append('prefer Firefox additional FFmpeg codec ABI over the basic package')
+          if 'codec_abi="$(ldconfig -p' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script:
               missing.append('select Firefox libavcodec-extra using the installed FFmpeg ABI instead of an old lexical recommendation')
           if 'ldd /usr/lib/firefox-esr/libmozavcodec.so' not in desktop_experience_script:
               missing.append('verify the Firefox RDD FFmpeg backend shared-library dependencies at launch')
