@@ -1,0 +1,60 @@
+name: Publish Verified Kali Candidate APK
+
+on:
+  push:
+    branches:
+      - security/hardening-phase-1
+    paths:
+      - '.github/workflows/publish-verified-kali-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the already verified build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Kali-Linux-1.4.33-arm64
+          repository: ah92j/DroidDesk-GIO-Fix
+          run-id: 42869049179
+          github-token: ${{ github.token }}
+          path: candidate
+
+      - name: Verify APK SHA256 against the successful build
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="candidate/Kali-Linux-1.4.33-arm64.apk"
+          CHECKSUM="$APK.sha256"
+          test -s "$APK"
+          test -s "$CHECKSUM"
+          EXPECTED="$(awk '{print $1}' "$CHECKSUM")"
+          ACTUAL="$(sha256sum "$APK" | awk '{print $1}')"
+          KNOWN_VERIFIED_SHA256="344b7b39a408a4564b63d50580411605bca52dffc2d3066f488f24ee3dfa8c90"
+          test "$ACTUAL" = "$EXPECTED"
+          test "$ACTUAL" = "$KNOWN_VERIFIED_SHA256"
+          echo "Verified ARM64 APK SHA256: $ACTUAL"
+          echo "APK size: $(stat -c%s "$APK") bytes"
+
+      - name: Replace stale release assets with the verified APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="v1.4.33+50"
+          APK="candidate/Kali-Linux-1.4.33-arm64.apk"
+          CHECKSUM="$APK.sha256"
+          TITLE="Kali Linux 1.4.33 (device-test candidate)"
+          NOTES="Verified device-test candidate. Includes the native Applications menu on the bottom XFCE panel, shortcut synchronization for previously installed applications, ARM64 Firefox media/codec repairs, safer X11 reconnect on desktop return, legacy drawing compatibility, and in-app prerelease update discovery. Built and signed with the permanent DroidDesk release key; existing Kali rootfs data is preserved."
+          gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
+          gh release edit "$RELEASE_TAG" --title "$TITLE" --prerelease --notes "$NOTES"
+          ASSET_SIZE="$(gh release view "$RELEASE_TAG" --json assets -q '.assets[] | select(.name == "Kali-Linux-1.4.33-arm64.apk") | .size')"
+          EXPECTED_SIZE="$(stat -c%s "$APK")"
+          test "$ASSET_SIZE" = "$EXPECTED_SIZE"
+          gh release view "$RELEASE_TAG" --json tagName,isPrerelease,assets
