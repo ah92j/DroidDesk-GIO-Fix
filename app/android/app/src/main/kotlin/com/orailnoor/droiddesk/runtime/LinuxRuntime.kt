@@ -863,6 +863,51 @@ class LinuxRuntime(private val context: Context) {
     }
 
     /**
+     * Retry the XFCE Applications menu independently from desktop-experience-v17.
+     * Older builds could mark v17 complete while the D-Bus session was not ready.
+     */
+    private fun ensureKaliApplicationsMenu(rootfs: File): Boolean {
+        val scriptDirectory = File(rootfs, "root/.droiddesk")
+        if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
+            Log.w(TAG, "Could not create the Applications-menu repair directory")
+            return false
+        }
+        val script = File(scriptDirectory, "ensure-applications-menu.sh")
+        return try {
+            context.assets.open("droiddesk/kali/ensure-applications-menu.sh").use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!script.setExecutable(true, false)) {
+                Log.w(TAG, "Could not mark the Applications-menu repair script executable")
+                return false
+            }
+            val result = runKaliProotCommand(
+                rootfs = rootfs,
+                workingDirectory = "/root",
+                guestCommand = listOf(
+                    "/usr/bin/env", "-i",
+                    "HOME=/root", "USER=root", "LOGNAME=root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null",
+                    "/bin/bash", "/root/.droiddesk/ensure-applications-menu.sh",
+                ),
+                timeoutMinutes = 2,
+                onOutput = { line -> Log.i(TAG, "Kali Applications menu: ${line.trimEnd()}") },
+            )
+            if (result.exitCode == 0) {
+                Log.i(TAG, "Kali XFCE Applications menu was verified")
+                true
+            } else {
+                Log.w(TAG, "Kali XFCE Applications menu repair failed (exit ${result.exitCode}): ${result.output.takeLast(1400)}")
+                false
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not execute the Kali Applications-menu repair", error)
+            false
+        }
+    }
+
+    /**
      * Upgrade an existing Kali rootfs in place with the user-facing desktop
      * additions that cannot be supplied by an APK update alone.
      */
@@ -932,6 +977,9 @@ class LinuxRuntime(private val context: Context) {
                     }
                     if (!ensureKaliGlycinAndroidCompatibility(rootfs)) {
                         Log.w(TAG, "Kali post-launch Glycin repair did not complete")
+                    }
+                    if (!ensureKaliApplicationsMenu(rootfs)) {
+                        Log.w(TAG, "Kali Applications menu repair did not complete; it will retry on the next desktop launch")
                     }
                     if (ensureKaliDesktopExperience(rootfs)) {
                         applyKaliDesktopSettingsToRunningSession(rootfs)

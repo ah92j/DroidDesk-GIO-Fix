@@ -185,9 +185,17 @@ class DesktopActivity : Activity() {
         x11ReconnectAttempts = 0
         enableImmersiveMode()
         if (isSetupDone && lorieView?.holder?.surface?.isValid == true) {
-            Log.i(TAG, "DesktopActivity resumed with a valid X11 surface; restoring the existing client")
+            Log.i(TAG, "DesktopActivity resumed; resetting the native Lorie socket before reconnecting")
+            releaseX11ConnectionForBackground()
             connectToX11ServiceIfNeeded()
             x11ReconnectHandler.postDelayed(x11ReconnectRunnable, 450L)
+            lorieView?.postDelayed({
+                if (activityResumed && lorieView?.holder?.surface?.isValid == true) {
+                    lorieView?.triggerCallback()
+                    lorieView?.invalidate()
+                    Log.i(TAG, "LorieView viewport refreshed after Android resume")
+                }
+            }, 900L)
         }
         restartSessionIfStopped()
     }
@@ -341,9 +349,21 @@ class DesktopActivity : Activity() {
         if (shouldConnect) connectToX11Service()
     }
 
+    private fun resetNativeX11Connection(reason: String) {
+        if (lorieView == null) return
+        runCatching {
+            LorieView.connect(-1)
+            Log.i(TAG, "Native Lorie X11 connection reset: $reason")
+        }.onFailure {
+            Log.w(TAG, "Could not reset native Lorie X11 connection: $reason", it)
+        }
+    }
+
     private fun releaseX11ConnectionForBackground() {
         synchronized(this) {
             connectionRequested = false
+            // Binder unbind does not close the native process-global Lorie connection.
+            resetNativeX11Connection("release X11 client")
             // Clear gesture listeners as well as the Binder FD. Recreate them only
             // after the next live X11 connection, otherwise a resumed LorieView can
             // retain an input controller attached to the old Surface generation.
@@ -380,6 +400,7 @@ class DesktopActivity : Activity() {
                     runCatching { logcatFd?.close() }
                     synchronized(this) {
                         connectionRequested = false
+                        resetNativeX11Connection("LorieView attach failed")
                         x11ServiceClient?.disconnect()
                         x11ServiceClient = null
                         X11ServiceClient.connectedServerPid = -1
@@ -391,6 +412,7 @@ class DesktopActivity : Activity() {
             onError = { message, error ->
                 synchronized(this) {
                     connectionRequested = false
+                    resetNativeX11Connection("X11 service error: $message")
                     x11ServiceClient?.disconnect()
                     x11ServiceClient = null
                     X11ServiceClient.connectedServerPid = -1
@@ -419,6 +441,12 @@ class DesktopActivity : Activity() {
         }
         addDesktopControls()
         lorieView?.requestFocus()
+        lorieView?.post {
+            if (activityResumed && lorieView?.holder?.surface?.isValid == true) {
+                lorieView?.triggerCallback()
+                lorieView?.invalidate()
+            }
+        }
         if (shouldStartSession) {
             startDesktopSessionIfRequested()
         } else {

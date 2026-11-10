@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.34+50
+name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.35+52
 
 on:
   workflow_dispatch:
@@ -24,6 +24,7 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidator.kt'
       - 'app/android/app/src/main/assets/droiddesk/kali/setup-kali-default.sh'
       - 'app/android/app/src/main/assets/droiddesk/kali/desktop-experience.sh'
+      - 'app/android/app/src/main/assets/droiddesk/kali/ensure-applications-menu.sh'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/KaliDpkgStatusParser.kt'
       - 'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/KaliDpkgStatusParserTest.kt'
@@ -98,6 +99,9 @@ jobs:
           desktop_experience_script = Path(
               'app/android/app/src/main/assets/droiddesk/kali/desktop-experience.sh'
           ).read_text()
+          applications_menu_script = Path(
+              'app/android/app/src/main/assets/droiddesk/kali/ensure-applications-menu.sh'
+          ).read_text()
           home_screen = Path('app/lib/screens/home_screen.dart').read_text()
           gradle_app = Path('app/android/app/build.gradle.kts').read_text()
           audio_output = Path(
@@ -154,6 +158,9 @@ jobs:
               'glycin-proot-compat-v1',
               'xfce-support-v1',
               'desktop-experience-v17',
+              'private fun ensureKaliApplicationsMenu(rootfs: File): Boolean',
+              'droiddesk/kali/ensure-applications-menu.sh',
+              'xfce-applications-menu-v1',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -271,6 +278,9 @@ jobs:
               'scheduleX11Reconnect(',
               'x11ReconnectAttempts < 8',
               'Scheduling X11 reconnect attempt',
+              'LorieView.connect(-1)',
+              'resetNativeX11Connection',
+              'Native Lorie X11 connection reset',
               'startKaliDesktopWithRecovery()',
               'val startupTimeouts = intArrayOf(45, 35)',
               'getLastKaliDesktopDiagnostic()',
@@ -464,8 +474,8 @@ jobs:
           ):
               missing.append('reconnect the X11 client when DesktopActivity resumes after losing its surface')
 
-          if 'version: 1.4.34+51' not in pubspec:
-              missing.append('expected release version 1.4.34+51')
+          if 'version: 1.4.35+52' not in pubspec:
+              missing.append('expected release version 1.4.35+52')
           if 'String _updateComparisonVersion = ' not in app_state or "info['comparisonVersion']" not in app_state:
               missing.append('compare complete Android versionName plus versionCode')
           if 'does not offer the exact build already installed' not in Path('app/test/services/update_service_test.dart').read_text():
@@ -585,7 +595,11 @@ jobs:
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
           if 'desktop-experience-v17' not in desktop_experience_script or 'desktop-experience-v17' not in runtime:
-              missing.append('use the same v16 desktop migration marker in the script and runtime')
+              missing.append('use the same v17 desktop migration marker in the script and runtime')
+          if 'ensureKaliApplicationsMenu(rootfs)' not in runtime or 'xfce-applications-menu-v1' not in runtime:
+              missing.append('retry XFCE Applications menu independently from the APT-heavy desktop migration')
+          if 'Firefox-Media-Diagnostic.txt' not in desktop_experience_script:
+              missing.append('copy Firefox codec and PulseAudio diagnostics to the Kali Desktop')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
           if 'droiddesk-browser.desktop' not in desktop_experience_script or 'droiddesk-browser' not in profile:
@@ -675,6 +689,9 @@ jobs:
           EXPERIENCE="app/android/app/src/main/assets/droiddesk/kali/desktop-experience.sh"
           bash -n "$EXPERIENCE"
           bash "$EXPERIENCE" --self-test
+          MENU_HELPER="app/android/app/src/main/assets/droiddesk/kali/ensure-applications-menu.sh"
+          bash -n "$MENU_HELPER"
+          bash "$MENU_HELPER" --self-test
 
       - name: Validate non-interactive Kali installer shell
         shell: bash
@@ -834,7 +851,7 @@ jobs:
           set -euo pipefail
           RELEASE_DIR="app/build/droiddesk-release"
           mkdir -p "$RELEASE_DIR"
-          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.34-arm64.apk"
+          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.35-arm64.apk"
           cp "app/build/app/outputs/flutter-apk/app-release.apk" "$RELEASE_APK"
           sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
           cat "$RELEASE_APK.sha256"
@@ -842,10 +859,10 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.34-arm64
+          name: Kali-Linux-1.4.35-arm64
           path: |
-            app/build/droiddesk-release/Kali-Linux-1.4.34-arm64.apk
-            app/build/droiddesk-release/Kali-Linux-1.4.34-arm64.apk.sha256
+            app/build/droiddesk-release/Kali-Linux-1.4.35-arm64.apk
+            app/build/droiddesk-release/Kali-Linux-1.4.35-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -855,10 +872,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="v1.4.34+51"
-          APK="app/build/droiddesk-release/Kali-Linux-1.4.34-arm64.apk"
+          RELEASE_TAG="v1.4.35+52"
+          APK="app/build/droiddesk-release/Kali-Linux-1.4.35-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.34 (device-test candidate)"
+          TITLE="Kali Linux 1.4.35 (device-test candidate)"
           NOTES="Device-test candidate. Replaces the XFCE Applications button with a compact four-dot icon while retaining the full installed-app menu; applies explicit Firefox HTML5 media-format preferences and a fresh desktop-experience migration; keeps the X11 client attached when the desktop is only covered and retries Surface reconnection; compares Android versionName plus versionCode so an installed build is not offered again. Preserves the permanent signing certificate and Kali rootfs data. Firefox playback and long-run Android lifecycle stability still require verification on the target device."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
@@ -867,6 +884,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" "$APK" "$CHECKSUM" \
               --title "$TITLE" \
+              --target "$GITHUB_SHA" \
               --prerelease \
               --notes "$NOTES"
           fi
