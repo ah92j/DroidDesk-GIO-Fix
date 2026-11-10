@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v22"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v23"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -30,25 +30,31 @@ object XfceMobileProfile {
         return try {
             wallpaperFile.parentFile?.mkdirs()
             File(homeDir, "Desktop").mkdirs()
-            context.assets.open(WALLPAPER_ASSET).use { input ->
-                wallpaperFile.outputStream().use(input::copyTo)
+            if (!wallpaperFile.isFile || wallpaperFile.length() == 0L) {
+                context.assets.open(WALLPAPER_ASSET).use { input ->
+                    wallpaperFile.outputStream().use(input::copyTo)
+                }
             }
 
             val xfconfDir = File(
                 homeDir,
                 ".config/xfce4/xfconf/xfce-perchannel-xml",
             ).apply { mkdirs() }
-            File(xfconfDir, "xfce4-panel.xml").writeText(panelConfig())
-            File(xfconfDir, "xfce4-desktop.xml").writeText(
+            // This profile is now a safe additive migration. Existing XFCE XML contains
+            // the user's wallpaper, dock/plugin order and desktop preferences; never replace it.
+            writeConfigIfMissing(File(xfconfDir, "xfce4-panel.xml"), panelConfig())
+            writeConfigIfMissing(
+                File(xfconfDir, "xfce4-desktop.xml"),
                 desktopConfig(xmlEscape(wallpaperPathInSession)),
             )
-            File(xfconfDir, "xfwm4.xml").writeText(windowManagerConfig())
-            File(xfconfDir, "xsettings.xml").writeText(
+            writeConfigIfMissing(File(xfconfDir, "xfwm4.xml"), windowManagerConfig())
+            writeConfigIfMissing(
+                File(xfconfDir, "xsettings.xml"),
                 xsettingsConfig(
                     if (iconThemeName in setOf("Papirus", "Adwaita", "hicolor")) iconThemeName else "hicolor",
                 ),
             )
-            File(xfconfDir, "xfce4-terminal.xml").writeText(terminalConfig())
+            writeConfigIfMissing(File(xfconfDir, "xfce4-terminal.xml"), terminalConfig())
             installMonospaceFontRule(homeDir)
             installPanelCss(homeDir)
             installAutoMaximize(homeDir)
@@ -86,6 +92,12 @@ object XfceMobileProfile {
         }
     }
 
+    private fun writeConfigIfMissing(file: File, contents: String) {
+        if (file.isFile && file.length() > 0L) return
+        file.parentFile?.mkdirs()
+        file.writeText(contents)
+    }
+
     private fun writeLauncher(
         file: File,
         name: String,
@@ -93,6 +105,8 @@ object XfceMobileProfile {
         exec: String,
         icon: String,
     ) {
+        // Preserve user edits to a dock or desktop launcher during app upgrades.
+        if (file.isFile) return
         file.parentFile?.mkdirs()
         file.writeText(
             """
@@ -118,18 +132,23 @@ object XfceMobileProfile {
         val configDir = File(homeDir, ".config/xfce4").apply { mkdirs() }
         val mimeApps = File(homeDir, ".config/mimeapps.list")
         mimeApps.parentFile?.mkdirs()
-        mimeApps.writeText(
-            """
-            [Default Applications]
-            inode/directory=thunar.desktop;
-            application/x-gnome-saved-search=thunar.desktop;
-            """.trimIndent() + "\n",
-        )
-        File(configDir, "helpers.rc").writeText(
-            listOf("FileManager=Thunar", "WebBrowser=droiddesk-browser.desktop")
-                .joinToString("\n", postfix = "\n"),
-        )
-        Log.i(TAG, "Configured Thunar and the direct Kali browser launcher")
+        val existingMime = if (mimeApps.isFile) mimeApps.readText() else ""
+        val mimeAdditions = buildList {
+            if (!existingMime.contains("inode/directory=")) add("inode/directory=thunar.desktop;")
+            if (!existingMime.contains("application/x-gnome-saved-search=")) {
+                add("application/x-gnome-saved-search=thunar.desktop;")
+            }
+        }
+        if (mimeAdditions.isNotEmpty()) {
+            val prefix = if (existingMime.isBlank()) "[Default Applications]\n" else ""
+            mimeApps.writeText(existingMime.trimEnd() + "\n" + prefix + mimeAdditions.joinToString("\n") + "\n")
+        }
+        val helpers = File(configDir, "helpers.rc")
+        val helperLines = if (helpers.isFile) helpers.readLines().toMutableList() else mutableListOf()
+        if (helperLines.none { it.startsWith("FileManager=") }) helperLines += "FileManager=Thunar"
+        if (helperLines.none { it.startsWith("WebBrowser=") }) helperLines += "WebBrowser=droiddesk-browser.desktop"
+        helpers.writeText(helperLines.joinToString("\n", postfix = "\n"))
+        Log.i(TAG, "Added missing Thunar and browser defaults without replacing user handlers")
     }
     private fun installPanelCss(homeDir: File) {
         val cssFile = File(homeDir, ".config/gtk-3.0/gtk.css")
