@@ -3094,20 +3094,20 @@ POLICY
               "$@" &
               local command_pid=$!
               (
-                while kill -0 "$command_pid" 2>/dev/null; do
+                while kill -0 "${'$'}command_pid" 2>/dev/null; do
                   sleep 15
-                  if kill -0 "$command_pid" 2>/dev/null; then
+                  if kill -0 "${'$'}command_pid" 2>/dev/null; then
                     latest_event="$(tail -n 1 /var/log/dpkg.log 2>/dev/null || true)"
-                    echo "[DroidDesk App Store] Still working: $label. Last dpkg activity: ${'$'}{latest_event:-No dpkg event recorded yet}"
+                    echo "[DroidDesk App Store] Still working: ${'$'}label. Last dpkg activity: ${'$'}{latest_event:-No dpkg event recorded yet}"
                   fi
                 done
               ) &
               local heartbeat_pid=$!
               local command_status=0
-              if wait "$command_pid"; then command_status=0; else command_status=$?; fi
-              kill "$heartbeat_pid" 2>/dev/null || true
-              wait "$heartbeat_pid" 2>/dev/null || true
-              return "$command_status"
+              if wait "${'$'}command_pid"; then command_status=0; else command_status=$?; fi
+              kill "${'$'}heartbeat_pid" 2>/dev/null || true
+              wait "${'$'}heartbeat_pid" 2>/dev/null || true
+              return "${'$'}command_status"
             }
 
             echo "[DroidDesk App Store] Checking the existing dpkg state before starting another install."
@@ -3126,11 +3126,11 @@ POLICY
               exit 33
             fi
 
-            if ! run_package_heartbeat "installing $package_name without optional recommendations" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends $aptAction -y "${'$'}package_spec"; then
+            if ! run_package_heartbeat "installing ${'$'}package_name without optional recommendations" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends ${'$'}aptAction -y "${'$'}package_spec"; then
               echo "[DroidDesk App Store] First install attempt failed; repairing dependencies and retrying once."
               run_package_heartbeat "resuming dpkg configuration" dpkg --configure -a || true
               run_package_heartbeat "repairing broken dependencies" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --fix-broken install -y --no-install-recommends
-              run_package_heartbeat "retrying $package_name installation" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends $aptAction -y "${'$'}package_spec"
+              run_package_heartbeat "retrying ${'$'}package_name installation" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends ${'$'}aptAction -y "${'$'}package_spec"
             fi
             if dpkg --audit | grep -q .; then
               echo "[DroidDesk App Store] Installation left incomplete package configuration."

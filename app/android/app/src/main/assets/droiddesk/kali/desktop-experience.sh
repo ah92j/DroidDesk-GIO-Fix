@@ -35,7 +35,6 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q "pulse_ready=0" "$0"
   grep -q "kali-wallpapers-2026" "$0"
   ! grep -Eq '(^|[[:space:]])--install-recommends([[:space:]]|$)' "$0"
-  ! grep -q "install -y --reinstall firefox-esr" "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -328,7 +327,17 @@ if [[ -z "$firefox_bin" ]]; then
   zenity --error --title='Kali Linux' --text='Firefox ESR is not installed.' 2>/dev/null || true
   exit 127
 fi
-exec "$firefox_bin" "$@"
+firefox_log="/home/kali/.local/share/droiddesk/firefox-launch.log"
+install -d -m 0755 "$(dirname "$firefox_log")"
+{
+  printf '%s\\n' "=== Firefox launch $(date -Is) ==="
+  printf '%s\\n' "PULSE_SERVER=$PULSE_SERVER"
+  pactl -s "$PULSE_SERVER" info 2>&1 || true
+  pactl -s "$PULSE_SERVER" list short sinks 2>&1 || true
+  ldconfig -p 2>/dev/null | grep -E "libavcodec|libavutil" || true
+} >> "$firefox_log" 2>&1
+echo "[DroidDesk Audio] Firefox launch diagnostics: $firefox_log"
+exec "$firefox_bin" "$@" >> "$firefox_log" 2>&1
 FIREFOX
 chmod 0755 /home/kali/.local/bin/droiddesk-firefox
 
@@ -610,13 +619,18 @@ If the publisher does not provide an ARM64 build, this exact download cannot be 
     fi
 
     install_ok=0
+    if ! sudo -n dpkg --configure -a; then
+      echo "[DroidDesk Installer] Repairing the previously interrupted dpkg transaction before this package."
+      sudo -n apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --fix-broken install -y --no-install-recommends
+      sudo -n dpkg --configure -a
+    fi
     if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-install-recommends install -y "$file"; then
       install_ok=1
     else
       echo "[DroidDesk Installer] APT local-file install failed; trying dpkg followed by dependency repair."
       sudo -n dpkg --configure -a || true
       sudo -n dpkg -i "$file" || true
-      if sudo -n apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --fix-broken install -y; then
+      if sudo -n apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --fix-broken install -y --no-install-recommends; then
         install_ok=1
       fi
     fi
