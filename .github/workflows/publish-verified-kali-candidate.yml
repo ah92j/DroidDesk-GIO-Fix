@@ -67,4 +67,15 @@ jobs:
           ASSET_SIZE="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.assets[] | select(.name == "Kali-Linux-1.4.33-arm64.apk") | .size')"
           EXPECTED_SIZE="$(stat -c%s "$APK")"
           test "$ASSET_SIZE" = "$EXPECTED_SIZE"
+
+          # Verify what a real Android client receives from GitHub's public CDN,
+          # not only the file that was uploaded from the Actions artifact.
+          ENCODED_TAG="${RELEASE_TAG//+/%2B}"
+          PUBLIC_APK_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$ENCODED_TAG/Kali-Linux-1.4.33-arm64.apk"
+          curl --fail --location --retry 3 --retry-all-errors \
+            "$PUBLIC_APK_URL" --output candidate/published.apk
+          PUBLIC_SHA256="$(sha256sum candidate/published.apk | awk '{print $1}')"
+          test "$PUBLIC_SHA256" = "$KNOWN_VERIFIED_SHA256"
+          echo "Public release download SHA256 matches the signed build: $PUBLIC_SHA256"
+
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease,assets
