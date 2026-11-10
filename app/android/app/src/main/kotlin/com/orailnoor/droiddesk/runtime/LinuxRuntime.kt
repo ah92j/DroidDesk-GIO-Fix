@@ -863,7 +863,7 @@ class LinuxRuntime(private val context: Context) {
     }
 
     /**
-     * Retry the XFCE Applications menu independently from desktop-experience-v17.
+     * Retry the XFCE Applications menu independently from desktop-experience-v18.
      * Older builds could mark v17 complete while the D-Bus session was not ready.
      */
     private fun ensureKaliApplicationsMenu(rootfs: File): Boolean {
@@ -911,9 +911,71 @@ class LinuxRuntime(private val context: Context) {
      * Upgrade an existing Kali rootfs in place with the user-facing desktop
      * additions that cannot be supplied by an APK update alone.
      */
+    /**
+     * Install the signed standalone Firefox 155 ARM64 build without rerunning
+     * the full APT/XFCE migration if the first network attempt was unavailable.
+     */
+    private fun ensureKaliFirefox155(rootfs: File): Boolean {
+        val installDir = File(rootfs, "opt/droiddesk-firefox-155.0.1")
+        val installedVersion = File(installDir, ".droiddesk-managed-version")
+        val browser = File(installDir, "firefox")
+        if (browser.canExecute() && installedVersion.isFile &&
+            runCatching { installedVersion.readText().trim() == "155.0.1" }.getOrDefault(false)
+        ) {
+            return true
+        }
+
+        val scriptDirectory = File(rootfs, "root/.droiddesk")
+        if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
+            Log.w(TAG, "Could not create Firefox 155 installer directory")
+            return false
+        }
+        val script = File(scriptDirectory, "desktop-experience.sh")
+        return try {
+            if (!script.isFile) {
+                context.assets.open("droiddesk/kali/desktop-experience.sh").use { input ->
+                    script.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            if (!script.setExecutable(true, false)) {
+                Log.w(TAG, "Could not mark Firefox 155 installer executable")
+                return false
+            }
+
+            val result = runKaliProotCommand(
+                rootfs = rootfs,
+                workingDirectory = "/root",
+                guestCommand = listOf(
+                    "/usr/bin/env", "-i",
+                    "HOME=/root", "USER=root", "LOGNAME=root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null",
+                    "/bin/bash", "/root/.droiddesk/desktop-experience.sh", "--install-firefox-155",
+                ),
+                timeoutMinutes = 20,
+                onOutput = { line -> Log.i(TAG, "Kali Firefox 155 installer: ${line.trimEnd()}") },
+            )
+            val installed = browser.canExecute() && installedVersion.isFile &&
+                runCatching { installedVersion.readText().trim() == "155.0.1" }.getOrDefault(false)
+            if (result.exitCode == 0 && installed) {
+                Log.i(TAG, "Official Mozilla Firefox 155.0.1 ARM64 installation is ready")
+                true
+            } else {
+                Log.w(
+                    TAG,
+                    "Firefox 155.0.1 installation is not ready (exit ${result.exitCode}): ${result.output.takeLast(1600)}",
+                )
+                false
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not run the Firefox 155.0.1 installer", error)
+            false
+        }
+    }
+
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v17")
-        if (completionMarker.isFile) return true
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v18")
+        if (completionMarker.isFile) return ensureKaliFirefox155(rootfs)
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
         if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
@@ -952,7 +1014,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v17").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v18").isFile && ensureKaliFirefox155(rootfs)
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)

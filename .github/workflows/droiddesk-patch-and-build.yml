@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.35+52
+name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.36+53
 
 on:
   workflow_dispatch:
@@ -157,7 +157,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v17',
+              'desktop-experience-v18',
               'private fun ensureKaliApplicationsMenu(rootfs: File): Boolean',
               'droiddesk/kali/ensure-applications-menu.sh',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
@@ -473,8 +473,8 @@ jobs:
           ):
               missing.append('reconnect the X11 client when DesktopActivity resumes after losing its surface')
 
-          if 'version: 1.4.35+52' not in pubspec:
-              missing.append('expected release version 1.4.35+52')
+          if 'version: 1.4.36+53' not in pubspec:
+              missing.append('expected release version 1.4.36+53')
           if 'String _updateComparisonVersion = ' not in app_state or "info['comparisonVersion']" not in app_state:
               missing.append('compare complete Android versionName plus versionCode')
           if 'does not offer the exact build already installed' not in Path('app/test/services/update_service_test.dart').read_text():
@@ -584,7 +584,7 @@ jobs:
               missing.append('Android launcher label must be Kali Linux')
           if "Text('Kali Linux', style: DroidTheme.headingMd)" not in home_screen:
               missing.append('home dashboard title must be Kali Linux')
-          for package in ['gvfs', 'gvfs-daemons', 'gvfs-backends', 'kali-wallpapers-2026', 'firefox-esr', 'libpulse0', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'gstreamer1.0-libav']:
+          for package in ['gvfs', 'gvfs-daemons', 'gvfs-backends', 'kali-wallpapers-2026', 'firefox-esr', 'libpulse0', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'gstreamer1.0-libav', 'gnupg', 'xz-utils']:
               if package not in desktop_experience_script:
                   missing.append(f'desktop-experience migration must install {package}')
           if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
@@ -593,8 +593,16 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v17' not in desktop_experience_script or 'desktop-experience-v17' not in runtime:
-              missing.append('use the same v17 desktop migration marker in the script and runtime')
+          if 'desktop-experience-v18' not in desktop_experience_script or 'desktop-experience-v18' not in runtime:
+              missing.append('use the same v18 desktop migration marker in the script and runtime')
+          if 'FIREFOX_155_VERSION="155.0.1"' not in desktop_experience_script or 'linux-aarch64/en-US/firefox-155.0.1.tar.xz' not in desktop_experience_script:
+              missing.append('install the official Mozilla Firefox 155.0.1 Linux ARM64 build')
+          if 'MOZILLA_RELEASE_SIGNING_FINGERPRINT="827E658608679618CD349F93678E455D76767AA3"' not in desktop_experience_script or 'VALIDSIG' not in desktop_experience_script:
+              missing.append('verify Firefox 155 against Mozilla’s pinned release signing key')
+          if 'ensureKaliFirefox155(rootfs)' not in runtime or '--install-firefox-155' not in runtime:
+              missing.append('retry Firefox 155 independently without rerunning the full desktop migration')
+          if 'droiddesk-firefox-155' not in desktop_experience_script or 'firefox-esr' not in desktop_experience_script:
+              missing.append('use a separate Firefox 155 profile and preserve the Kali ESR fallback')
           if 'ensureKaliApplicationsMenu(rootfs)' not in runtime or 'droiddesk/kali/ensure-applications-menu.sh' not in runtime:
               missing.append('retry XFCE Applications menu independently from the APT-heavy desktop migration')
           if 'xfce-applications-menu-v1' not in applications_menu_script or 'int[[:space:]]+)?([0-9]+' not in applications_menu_script:
@@ -852,7 +860,7 @@ jobs:
           set -euo pipefail
           RELEASE_DIR="app/build/droiddesk-release"
           mkdir -p "$RELEASE_DIR"
-          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.35-arm64.apk"
+          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.36-arm64.apk"
           cp "app/build/app/outputs/flutter-apk/app-release.apk" "$RELEASE_APK"
           sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
           cat "$RELEASE_APK.sha256"
@@ -860,10 +868,10 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.35-arm64
+          name: Kali-Linux-1.4.36-arm64
           path: |
-            app/build/droiddesk-release/Kali-Linux-1.4.35-arm64.apk
-            app/build/droiddesk-release/Kali-Linux-1.4.35-arm64.apk.sha256
+            app/build/droiddesk-release/Kali-Linux-1.4.36-arm64.apk
+            app/build/droiddesk-release/Kali-Linux-1.4.36-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -873,11 +881,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="v1.4.35+52"
-          APK="app/build/droiddesk-release/Kali-Linux-1.4.35-arm64.apk"
+          RELEASE_TAG="v1.4.36+53"
+          APK="app/build/droiddesk-release/Kali-Linux-1.4.36-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.35 (device-test candidate)"
-          NOTES="Device-test candidate. Replaces the XFCE Applications button with a compact four-dot icon while retaining the full installed-app menu; applies explicit Firefox HTML5 media-format preferences and a fresh desktop-experience migration; keeps the X11 client attached when the desktop is only covered and retries Surface reconnection; compares Android versionName plus versionCode so an installed build is not offered again. Preserves the permanent signing certificate and Kali rootfs data. Firefox playback and long-run Android lifecycle stability still require verification on the target device."
+          TITLE="Kali Linux 1.4.36 (Firefox 155 device-test candidate)"
+          NOTES="Device-test candidate. Adds official Mozilla Firefox 155.0.1 for Linux ARM64 beside Kali Firefox ESR, verifies Mozilla’s signed checksum manifest with a pinned release signing key, checks the ARM64 executable and shared-library dependencies, and launches 155 with a separate profile while preserving the ESR fallback and existing ESR profile. Targets the YouTube playback failure reported against Firefox 153 in Mozilla bug 2062266. Updates the desktop migration to v18 and preserves Kali rootfs data and the permanent Android signing certificate. Firefox playback, Facebook audio, and Android lifecycle stability still require verification on the target phone."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
             gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
