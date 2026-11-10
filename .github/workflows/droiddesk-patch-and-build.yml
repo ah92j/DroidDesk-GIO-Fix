@@ -32,6 +32,9 @@ on:
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AndroidPcmAudioOutput.kt'
       - 'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/XfceMobileProfile.kt'
       - 'app/lib/state/app_state.dart'
+      - 'app/lib/screens/apps/app_catalog_screen.dart'
+      - 'app/lib/services/update_service.dart'
+      - 'app/lib/widgets/update_sheet.dart'
       - 'app/lib/screens/setup/setup_progress.dart'
       - 'app/lib/screens/home_screen.dart'
       - 'app/lib/screens/setup/de_install_screen.dart'
@@ -110,6 +113,10 @@ jobs:
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
           ).read_text()
           pubspec = Path('app/pubspec.yaml').read_text()
+          app_state = Path('app/lib/state/app_state.dart').read_text()
+          update_service = Path('app/lib/services/update_service.dart').read_text()
+          update_sheet = Path('app/lib/widgets/update_sheet.dart').read_text()
+          app_catalog = Path('app/lib/screens/apps/app_catalog_screen.dart').read_text()
           manifest = Path('app/android/app/src/main/AndroidManifest.xml').read_text()
           archive_tests = Path(
               'app/android/app/src/test/kotlin/com/orailnoor/droiddesk/runtime/ArchivePathValidatorTest.kt'
@@ -134,7 +141,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v7',
+              'desktop-experience-v8',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -433,8 +440,25 @@ jobs:
           if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.23+40' not in pubspec:
-              missing.append('expected release version 1.4.23+40')
+          if 'version: 1.4.24+41' not in pubspec:
+              missing.append('expected release version 1.4.24+41')
+          if "static const repo = 'ah92j/DroidDesk-GIO-Fix';" not in update_service:
+              missing.append('updater must check releases from the APK publishing repository')
+          if 'bool force = false' not in update_service or 'checkForUpdate(force: true)' not in app_state:
+              missing.append('check GitHub for a newer APK as soon as an older app launches')
+          if 'launchUrl(Uri.parse(release.apkUrl)' not in update_sheet:
+              missing.append('show a direct APK download link in the update prompt')
+          if "firefox-esr" not in app_catalog or "chromium" not in app_catalog or "thunderbird" not in app_catalog:
+              missing.append('include core ARM64 desktop applications in Featured')
+          if "Future<bool> _install" not in app_catalog or "install --only-upgrade" not in runtime:
+              missing.append('per-app Updates must upgrade installed Kali packages')
+          if 'fun searchKaliPackages(rootfs: File' not in runtime or 'fun installKaliStorePackage(' not in runtime:
+              missing.append('Kali app store must search and install inside the Kali ARM64 rootfs')
+          if 'linuxRuntime.searchKaliPackages(kaliRootfs' not in activity or 'linuxRuntime.installKaliStorePackage(kaliRootfs' not in activity:
+              missing.append('route Kali App Store operations to the Kali PRoot environment')
+          if 'if (file.isFile) return' not in profile or 'writeConfigIfMissing' not in profile or 'PROFILE_MARKER = ".droiddesk-xfce-mobile-v23"' not in profile:
+              missing.append('migrate XFCE profile without replacing user settings or dock launchers')
+
           if 'clear_stale_apt_indexes' in kali_setup_script:
               missing.append('preserve APT package indexes between resumable installer attempts')
           if 'APT::Keep-Downloaded-Packages=true' not in kali_setup_script:
@@ -460,12 +484,12 @@ jobs:
                   missing.append(f'desktop-experience migration must install {package}')
           if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
               missing.append('disable expensive Thunar thumbnails for mobile performance')
-          if 'name="use_compositing"' not in desktop_experience_script or 'false("/>)#\\1true\\2' not in desktop_experience_script:
-              missing.append('enable XFCE compositing so the transparent dock is not rendered black')
+          if 'name="use_compositing"' not in desktop_experience_script or '! grep -q' not in desktop_experience_script:
+              missing.append('preserve a user's existing XFCE compositing setting during migration')
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v7' not in desktop_experience_script or 'desktop-experience-v7' not in runtime:
-              missing.append('use the same v7 desktop migration marker in the script and runtime')
+          if 'desktop-experience-v8' not in desktop_experience_script or 'desktop-experience-v8' not in runtime:
+              missing.append('use the same v8 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
           if 'droiddesk-browser.desktop' not in desktop_experience_script or 'droiddesk-browser' not in profile:
@@ -481,8 +505,8 @@ jobs:
               missing.append('enable explicit Firefox WebM audio/video MSE preferences')
           if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script:
               missing.append('enable Firefox software VP8/VP9 fallback, RDD and disable unsupported AV1')
-          if 'apt-get --install-recommends' not in desktop_experience_script or 'install -y --reinstall firefox-esr' not in desktop_experience_script:
-              missing.append('refresh Firefox ESR with its ABI-matched recommended FFmpeg decoder')
+          if 'apt-get --install-recommends' not in desktop_experience_script or 'install -y --reinstall firefox-esr' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
+              missing.append('install the matching ARM64 FFmpeg codec ABI and disable incompatible RDD sandbox in PRoot')
           if 'file -b "$file"' not in desktop_experience_script or 'Download the ARM64 AppImage' not in desktop_experience_script:
               missing.append('validate AppImage architecture before creating launcher')
           if 'dpkg-deb -f "$file" Architecture' not in desktop_experience_script or '--fix-broken install' not in desktop_experience_script or 'package-install.log' not in desktop_experience_script:
@@ -491,8 +515,9 @@ jobs:
               missing.append('install a dedicated Firefox desktop launcher with PulseAudio environment')
           if 'rm -f /home/kali/Desktop/Trash.desktop' not in desktop_experience_script:
               missing.append('remove the duplicate custom Trash desktop shortcut')
-          if 'workspace0/last-image --set' not in runtime:
-              missing.append('apply the official Kali default wallpaper to the running XFCE session')
+          live_xfce_refresh = runtime.split('private fun applyKaliDesktopSettingsToRunningSession', 1)[1].split('/** Start Kali XFCE', 1)[0]
+          if 'last-image --set' in live_xfce_refresh or 'background-style --set' in live_xfce_refresh:
+              missing.append('never overwrite the selected wallpaper or dock style during desktop refresh')
           if 'name="image-path"' not in desktop_experience_script:
               missing.append('expose Kali wallpaper directory in XFCE Desktop Settings')
 
@@ -676,7 +701,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.23-arm64
+          name: Kali-Linux-1.4.24-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
