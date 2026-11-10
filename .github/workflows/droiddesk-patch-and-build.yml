@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.33+50
+name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.34+50
 
 on:
   workflow_dispatch:
@@ -153,7 +153,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v16',
+              'desktop-experience-v17',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -266,7 +266,10 @@ jobs:
               'Existing Linux desktop process is alive',
               'releaseX11ConnectionForBackground()',
               'connectToX11ServiceIfNeeded()',
-              'x11ReconnectAttempts < 4',
+              'surfaceCreated(holder: SurfaceHolder)',
+              'X11 client attached while MainActivity covers Desktop',
+              'scheduleX11Reconnect(',
+              'x11ReconnectAttempts < 8',
               'Scheduling X11 reconnect attempt',
               'startKaliDesktopWithRecovery()',
               'val startupTimeouts = intArrayOf(45, 35)',
@@ -286,6 +289,8 @@ jobs:
               'private fun requireHttpsUrl(raw: String): URL',
               'current = requireHttpsUrl(URL(current, location).toString())',
               'val verifiedApk = requireManagedApk(context, apk)',
+              'val comparisonVersion = "$versionName+$code"',
+              '"comparisonVersion" to comparisonVersion',
           ]
 
           missing = [item for item in required_runtime if item not in runtime]
@@ -459,8 +464,14 @@ jobs:
           ):
               missing.append('reconnect the X11 client when DesktopActivity resumes after losing its surface')
 
-          if 'version: 1.4.33+50' not in pubspec:
-              missing.append('expected release version 1.4.33+50')
+          if 'version: 1.4.34+51' not in pubspec:
+              missing.append('expected release version 1.4.34+51')
+          if 'String _updateComparisonVersion = ' not in app_state or "info['comparisonVersion']" not in app_state:
+              missing.append('compare complete Android versionName plus versionCode')
+          if 'does not offer the exact build already installed' not in Path('app/test/services/update_service_test.dart').read_text():
+              missing.append('exact-installed-build update regression test')
+          if 'droiddesk-kali-menu.svg' not in desktop_experience_script or 'media.mp4.enabled' not in desktop_experience_script:
+              missing.append('compact four-dot Kali menu icon and explicit Firefox media format preferences')
           if 'private val kaliAptTransactionLock = ReentrantLock(true)' not in runtime or 'kaliAptTransactionLock.withLock' not in runtime:
               missing.append('serialize Kali App Store APT operations against desktop migrations')
           if 'private fun refreshKaliPackageIndexes(' not in runtime or 'apt-get -o Acquire::ForceIPv4=true' not in runtime:
@@ -573,7 +584,7 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v16' not in desktop_experience_script or 'desktop-experience-v16' not in runtime:
+          if 'desktop-experience-v17' not in desktop_experience_script or 'desktop-experience-v17' not in runtime:
               missing.append('use the same v16 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
@@ -823,7 +834,7 @@ jobs:
           set -euo pipefail
           RELEASE_DIR="app/build/droiddesk-release"
           mkdir -p "$RELEASE_DIR"
-          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.33-arm64.apk"
+          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.34-arm64.apk"
           cp "app/build/app/outputs/flutter-apk/app-release.apk" "$RELEASE_APK"
           sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
           cat "$RELEASE_APK.sha256"
@@ -831,10 +842,10 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.33-arm64
+          name: Kali-Linux-1.4.34-arm64
           path: |
-            app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk
-            app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk.sha256
+            app/build/droiddesk-release/Kali-Linux-1.4.34-arm64.apk
+            app/build/droiddesk-release/Kali-Linux-1.4.34-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -844,11 +855,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="v1.4.33+50"
-          APK="app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk"
+          RELEASE_TAG="v1.4.34+51"
+          APK="app/build/droiddesk-release/Kali-Linux-1.4.34-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.33 (device-test candidate)"
-          NOTES="Device-test candidate. Adds a native Applications menu to the bottom XFCE panel, syncs shortcuts for previously installed apps, repairs ARM64 Firefox codec selection, prevents destructive session restarts on Android screen return, adds bounded X11 reconnection and legacy drawing compatibility, and enables in-app prerelease updates. Preserves the permanent signing certificate and Kali rootfs data."
+          TITLE="Kali Linux 1.4.34 (device-test candidate)"
+          NOTES="Device-test candidate. Replaces the XFCE Applications button with a compact four-dot icon while retaining the full installed-app menu; applies explicit Firefox HTML5 media-format preferences and a fresh desktop-experience migration; keeps the X11 client attached when the desktop is only covered and retries Surface reconnection; compares Android versionName plus versionCode so an installed build is not offered again. Preserves the permanent signing certificate and Kali rootfs data. Firefox playback and long-run Android lifecycle stability still require verification on the target device."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
             gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber

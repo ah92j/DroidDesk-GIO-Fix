@@ -34,7 +34,13 @@ object AppUpdater {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
         @Suppress("DEPRECATION")
         val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
-        return mapOf("versionName" to (info.versionName ?: ""), "versionCode" to code)
+        val versionName = (info.versionName ?: "").substringBefore('+')
+        val comparisonVersion = "$versionName+$code"
+        return mapOf(
+            "versionName" to versionName,
+            "versionCode" to code,
+            "comparisonVersion" to comparisonVersion,
+        )
     }
 
     fun canInstall(context: Context): Boolean =

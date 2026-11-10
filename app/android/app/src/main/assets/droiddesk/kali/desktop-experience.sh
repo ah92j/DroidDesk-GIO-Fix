@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v16"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v17"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -22,14 +22,19 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-2026' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v16" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v17" ]]
   grep -q 'codec_recommendations' "$0"
   grep -q 'Firefox codec backend may require a different FFmpeg ABI' "$0"
   grep -q 'Route stock package-provided launchers through the same audio/codec wrapper' "$0"
   grep -q 'Synchronize desktop shortcuts for previously installed Kali store packages' "$0"
   grep -q 'Install the XFCE Applications menu on the bottom panel' "$0"
   grep -q 'applicationsmenu' "$0"
+  grep -q 'droiddesk-kali-menu.svg' "$0"
+  grep -q 'droiddesk-kali-menu' "$0"
   grep -q 'show-menu-icons' "$0"
+  grep -q 'pref("media.mp4.enabled", true);' "$0"
+  grep -q 'pref("media.opus.enabled", true);' "$0"
+  grep -q 'user_pref("media.mp4.enabled", true);' "$0"
   grep -q 'panel-with-applications-menu.xml' "$0"
   grep -q 'Saved the updated panel XML' "$0"
   grep -q 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' "$0"
@@ -511,6 +516,10 @@ pref("gfx.webrender.software", true);
 pref("gfx.canvas.accelerated", false);
 pref("gfx.x11-egl.force-disabled", true);
 pref("media.ffmpeg.enabled", true);
+pref("media.mp4.enabled", true);
+pref("media.ogg.enabled", true);
+pref("media.opus.enabled", true);
+pref("media.wave.enabled", true);
 pref("media.rdd-ffmpeg.enabled", true);
 pref("media.ffvpx.enabled", true);
 pref("media.rdd-process.enabled", true);
@@ -548,6 +557,10 @@ user_pref("gfx.webrender.software", true);
 user_pref("gfx.canvas.accelerated", false);
 user_pref("gfx.x11-egl.force-disabled", true);
 user_pref("media.ffmpeg.enabled", true);
+user_pref("media.mp4.enabled", true);
+user_pref("media.ogg.enabled", true);
+user_pref("media.opus.enabled", true);
+user_pref("media.wave.enabled", true);
 user_pref("media.rdd-ffmpeg.enabled", true);
 user_pref("media.ffvpx.enabled", true);
 user_pref("media.av1.enabled", false);
@@ -937,6 +950,22 @@ if [[ -s /home/kali/.local/share/droiddesk/dbus-session-address ]] && pgrep -x x
     DBUS_SESSION_BUS_ADDRESS="$session_address" xfdesktop --reload >/dev/null 2>&1 || true
 fi
 
+# A compact four-dot Kali-style launcher icon keeps the bottom panel uncluttered.
+MENU_ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
+install -d -m 0755 "$MENU_ICON_DIR"
+cat > "$MENU_ICON_DIR/droiddesk-kali-menu.svg" <<'KALI_MENU_ICON'
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <g fill="#ffffff">
+    <circle cx="7" cy="7" r="3.1"/>
+    <circle cx="17" cy="7" r="3.1"/>
+    <circle cx="7" cy="17" r="3.1"/>
+    <circle cx="17" cy="17" r="3.1"/>
+  </g>
+</svg>
+KALI_MENU_ICON
+chmod 0644 "$MENU_ICON_DIR/droiddesk-kali-menu.svg"
+gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+
 # Install the XFCE Applications menu on the bottom panel.
 # It reads system .desktop entries, so apps appear even without a desktop shortcut.
 # The applicationsmenu plugin is built into the XFCE panel used by this profile.
@@ -986,7 +1015,7 @@ if [[ -z "$menu_id" ]]; then
   xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/button-title" \
     --create --type string --set Applications
   xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/button-icon" \
-    --create --type string --set start-here
+    --create --type string --set droiddesk-kali-menu
   xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/show-menu-icons" \
     --create --type bool --set true
 
@@ -1000,9 +1029,21 @@ else
   echo "[DroidDesk Panel] Applications menu already exists on the bottom panel (plugin $menu_id)."
 fi
 
+# Apply icon and compact-button settings even when an Applications plugin already existed.
+if [[ -n "$menu_id" ]]; then
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/show-button-title" \
+    --create --type bool --set false
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/button-title" \
+    --create --type string --set Applications
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/button-icon" \
+    --create --type string --set droiddesk-kali-menu
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/show-menu-icons" \
+    --create --type bool --set true
+fi
+
 xfce4-panel --restart
 xfconf-query -c "$channel" -p "$panel_path" >/dev/null
-echo "[DroidDesk Panel] Applications menu is active on bottom panel 2."
+echo "[DroidDesk Panel] Four-dot Applications menu is active on bottom panel 2."
 PANEL_MENU
   then
     PANEL_MENU_CONFIGURED=1

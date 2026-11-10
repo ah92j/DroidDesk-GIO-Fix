@@ -185,8 +185,9 @@ class DesktopActivity : Activity() {
         x11ReconnectAttempts = 0
         enableImmersiveMode()
         if (isSetupDone && lorieView?.holder?.surface?.isValid == true) {
-            Log.i(TAG, "DesktopActivity resumed with a valid X11 surface; reconnecting input client")
+            Log.i(TAG, "DesktopActivity resumed with a valid X11 surface; restoring the existing client")
             connectToX11ServiceIfNeeded()
+            x11ReconnectHandler.postDelayed(x11ReconnectRunnable, 450L)
         }
         restartSessionIfStopped()
     }
@@ -249,9 +250,9 @@ class DesktopActivity : Activity() {
         activityResumed = false
         x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
         clipboardSync?.stop()
-        // MainActivity can cover the desktop temporarily. Drop only the UI-side
-        // Binder/client connection; keep the X server and Linux session alive.
-        releaseX11ConnectionForBackground()
+        // Keep the Lorie/X11 client attached while MainActivity or Android merely
+        // covers this Activity. Disconnect only when the Surface is actually destroyed
+        // or this Activity is destroyed; detaching on every onPause caused black returns.
         super.onPause()
     }
 
@@ -312,6 +313,8 @@ class DesktopActivity : Activity() {
         surfaceCallback = object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.i(TAG, "LorieView surfaceCreated")
+                x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
+                x11ReconnectHandler.postDelayed(x11ReconnectRunnable, 180L)
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -373,9 +376,16 @@ class DesktopActivity : Activity() {
                     x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
                     attachDesktopInput()
                 } catch (error: Throwable) {
-                    connectionFd.close()
-                    logcatFd?.close()
+                    runCatching { connectionFd.close() }
+                    runCatching { logcatFd?.close() }
+                    synchronized(this) {
+                        connectionRequested = false
+                        x11ServiceClient?.disconnect()
+                        x11ServiceClient = null
+                        X11ServiceClient.connectedServerPid = -1
+                    }
                     showX11Error("Failed to attach LorieView to the X11 service", error)
+                    scheduleX11Reconnect("LorieView attach failed")
                 }
             },
             onError = { message, error ->
@@ -383,17 +393,24 @@ class DesktopActivity : Activity() {
                     connectionRequested = false
                     x11ServiceClient?.disconnect()
                     x11ServiceClient = null
+                    X11ServiceClient.connectedServerPid = -1
                 }
                 showX11Error(message, error)
-                if (activityResumed && x11ReconnectAttempts < 4) {
-                    val delay = (750L shl x11ReconnectAttempts.coerceAtMost(3)).coerceAtMost(6_000L)
-                    x11ReconnectAttempts++
-                    Log.w(TAG, "Scheduling X11 reconnect attempt $x11ReconnectAttempts in ${delay}ms")
-                    x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
-                    x11ReconnectHandler.postDelayed(x11ReconnectRunnable, delay)
-                }
+                scheduleX11Reconnect(message)
             },
         ).also { it.connect() }
+    }
+
+    private fun scheduleX11Reconnect(reason: String) {
+        if (!activityResumed || isFinishing || isDestroyed ||
+            lorieView?.holder?.surface?.isValid != true || x11ReconnectAttempts >= 8
+        ) return
+
+        val delay = (500L shl x11ReconnectAttempts.coerceAtMost(4)).coerceAtMost(8_000L)
+        x11ReconnectAttempts++
+        Log.w(TAG, "Scheduling X11 reconnect attempt $x11ReconnectAttempts in ${delay}ms after: $reason")
+        x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
+        x11ReconnectHandler.postDelayed(x11ReconnectRunnable, delay)
     }
 
     private fun attachDesktopInput() {

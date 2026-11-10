@@ -562,6 +562,7 @@ class AppState extends ChangeNotifier {
   // ── In-app updates ──
 
   String _appVersion = '';
+  String _updateComparisonVersion = '';
   AppRelease? _availableUpdate;
   bool _checkingUpdate = false;
   bool _downloadingUpdate = false;
@@ -598,13 +599,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<String> _installedVersion() async {
-    if (_appVersion.isEmpty) {
+    if (_appVersion.isEmpty || _updateComparisonVersion.isEmpty) {
       try {
         final info = await DroidDeskPlatform.getAppVersion();
         _appVersion = info['versionName']?.toString() ?? '';
+        final nativeComparison = info['comparisonVersion']?.toString() ?? '';
+        final buildCode = info['versionCode']?.toString() ?? '';
+        _updateComparisonVersion = nativeComparison.isNotEmpty
+            ? nativeComparison
+            : (buildCode.isNotEmpty ? '$_appVersion+$buildCode' : _appVersion);
       } catch (_) {}
     }
-    return _appVersion;
+    return _updateComparisonVersion;
   }
 
   /// Looks for a newer GitHub release. Automatic checks are throttled and silent;

@@ -81,6 +81,25 @@ void main() {
       expect(selected!.tag, 'v1.4.33+51');
     });
 
+    test('does not offer the exact build already installed', () {
+      final selected = UpdateService.selectNewerRelease(
+        [release(tag: 'v1.4.33+50')],
+        installedVersion: '1.4.33+50',
+      );
+
+      expect(selected, isNull);
+    });
+
+    test('offers a newer build with the same semantic version', () {
+      final selected = UpdateService.selectNewerRelease(
+        [release(tag: 'v1.4.33+51')],
+        installedVersion: '1.4.33+50',
+      );
+
+      expect(selected, isNotNull);
+      expect(selected!.tag, 'v1.4.33+51');
+    });
+
     test('compares build numbers when semantic version components match', () {
       expect(UpdateService.isNewer('1.4.32+50', '1.4.32+49'), isTrue);
       expect(UpdateService.isNewer('1.4.32+49', '1.4.32+49'), isFalse);
