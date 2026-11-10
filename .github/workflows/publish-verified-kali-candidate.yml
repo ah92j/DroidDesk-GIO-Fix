@@ -21,7 +21,7 @@ jobs:
         with:
           name: Kali-Linux-1.4.33-arm64
           repository: ah92j/DroidDesk-GIO-Fix
-          run-id: 42869049179
+          run-id: 42870331318
           github-token: ${{ github.token }}
           path: candidate
 
@@ -35,7 +35,7 @@ jobs:
           test -s "$CHECKSUM"
           EXPECTED="$(awk '{print $1}' "$CHECKSUM")"
           ACTUAL="$(sha256sum "$APK" | awk '{print $1}')"
-          KNOWN_VERIFIED_SHA256="344b7b39a408a4564b63d50580411605bca52dffc2d3066f488f24ee3dfa8c90"
+          KNOWN_VERIFIED_SHA256="e9e745321488b8e81c832e4c5f51fe5210e79a70f4354cbd6cd011eea787e934"
           test "$ACTUAL" = "$EXPECTED"
           test "$ACTUAL" = "$KNOWN_VERIFIED_SHA256"
           echo "Verified ARM64 APK SHA256: $ACTUAL"
@@ -50,10 +50,18 @@ jobs:
           RELEASE_TAG="v1.4.33+50"
           APK="candidate/Kali-Linux-1.4.33-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.33 (device-test candidate)"
-          NOTES="Verified device-test candidate. Includes the native Applications menu on the bottom XFCE panel, shortcut synchronization for previously installed applications, ARM64 Firefox media/codec repairs, safer X11 reconnect on desktop return, legacy drawing compatibility, and in-app prerelease update discovery. Built and signed with the permanent DroidDesk release key; existing Kali rootfs data is preserved."
+          TITLE="Kali Linux 1.4.33"
+          NOTES="Kali Linux 1.4.33 ARM64 release. Adds the native Applications menu to the bottom XFCE panel, synchronizes shortcuts for previously installed applications, improves ARM64 Firefox media/codec selection, adds safer X11 reconnection and legacy drawing compatibility, and fixes in-app update discovery. Automated Flutter and Kotlin tests passed and the APK matches the permanent signing key. Firefox video playback and desktop-return stability still require verification on the target Android device. Existing Kali rootfs data is preserved."
           gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber --repo "$GITHUB_REPOSITORY"
-          gh release edit "$RELEASE_TAG" --title "$TITLE" --prerelease --notes "$NOTES" --repo "$GITHUB_REPOSITORY"
+          gh release edit "$RELEASE_TAG" --title "$TITLE" --notes "$NOTES" --repo "$GITHUB_REPOSITORY"
+          RELEASE_ID="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json id -q '.id')"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F prerelease=false \
+            -F make_latest=true \
+            -f name="$TITLE" \
+            -f body="$NOTES" >/dev/null
+          RELEASE_PRERELEASE="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.prerelease')"
+          test "$RELEASE_PRERELEASE" = "false"
           ASSET_SIZE="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[] | select(.name == "Kali-Linux-1.4.33-arm64.apk") | .size')"
           EXPECTED_SIZE="$(stat -c%s "$APK")"
           test "$ASSET_SIZE" = "$EXPECTED_SIZE"
