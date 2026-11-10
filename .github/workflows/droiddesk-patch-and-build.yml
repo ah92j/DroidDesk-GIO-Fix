@@ -141,7 +141,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v13',
+              'desktop-experience-v14',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -515,7 +515,7 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v13' not in desktop_experience_script or 'desktop-experience-v13' not in runtime:
+          if 'desktop-experience-v14' not in desktop_experience_script or 'desktop-experience-v14' not in runtime:
               missing.append('use the same v8 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
@@ -541,7 +541,10 @@ jobs:
           if 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' not in desktop_experience_script:
               missing.append('make Firefox bundled libraries visible to RDD/media child processes')
           if 'libavcodec-extra' not in desktop_experience_script:
-              missing.append('prefer Firefox additional FFmpeg codec ABI over the basic package')
+              missing.append('prefer Firefox additional FFmpeg codec ABI over the basic package')          if 'codec_abi="$(ldconfig -p' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script:
+              missing.append('select Firefox libavcodec-extra using the installed FFmpeg ABI instead of an old lexical recommendation')
+          if 'ldd /usr/lib/firefox-esr/libmozavcodec.so' not in desktop_experience_script:
+              missing.append('verify the Firefox RDD FFmpeg backend shared-library dependencies at launch')
           if 'archive.kali.org/kali/' not in desktop_experience_script:
               missing.append('retry desktop migration using the official Kali HTTPS archive mirror')
           if 'Still working:' not in desktop_experience_script or 'policy-rc.d' not in desktop_experience_script:

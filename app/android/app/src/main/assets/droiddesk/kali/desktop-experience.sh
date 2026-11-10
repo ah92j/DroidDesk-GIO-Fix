@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v13"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v14"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -22,11 +22,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-2026' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v13" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v14" ]]
   grep -q 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' "$0"
   grep -q 'archive.kali.org/kali/' "$0"
-  grep -q 'libavcodec-extra' "$0"
+  grep -q 'libavcodec-extra$codec_abi' "$0"
+  grep -q 'codec_abi="$(ldconfig -p' "$0"
   grep -q 'apt-cache depends firefox-esr' "$0"
+  grep -q 'ldd /usr/lib/firefox-esr/libmozavcodec.so' "$0"
   grep -q 'libavcodec-extra' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
   grep -q 'user_pref("media.rdd-process.enabled", true);' "$0"
@@ -186,40 +188,62 @@ if ! package_installed firefox-esr; then
   exit 22
 fi
 
-# Prefer the FFmpeg package recommended by the installed Firefox ESR build.
-# Fall back to the ABI exposed by the system FFmpeg libraries when recommendations are absent.
-codec_recommendations="$(apt-cache depends firefox-esr 2>/dev/null |
-  sed -nE 's/.*(libavcodec(-extra)?[0-9]+).*/\1/p' | sort -u)
-codec_candidate="$(printf '%s\n' "$codec_recommendations" | grep -E '^libavcodec-extra[0-9]+$' | head -n1 || true)"
-if [[ -z "$codec_candidate" ]]; then
-  codec_candidate="$(printf '%s\n' "$codec_recommendations" | grep -E '^libavcodec[0-9]+$' | head -n1 || true)"
-fi
+# Select the codec package that matches the FFmpeg ABI installed on this Kali ARM64 rootfs.
+# Firefox ESR needs the matching extra codec build for H.264/AAC; never choose an older ABI
+# merely because apt-cache prints old Recommends alternatives alphabetically.
 codec_abi="$(ldconfig -p 2>/dev/null |
   sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
   sort -rn | head -n1)"
-if [[ -z "$codec_candidate" && "$codec_abi" =~ ^[0-9]+$ ]]; then
-  codec_candidate="libavcodec-extra$codec_abi"
-fi
-if [[ -n "$codec_candidate" ]] && apt-cache show "$codec_candidate" 2>/dev/null |
-   awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'; then
-  echo "[Kali Linux] Installing Firefox ESR codec package: $codec_candidate"
-  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
-    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-    install -y --no-install-recommends "$codec_candidate"
-  ldconfig 2>/dev/null || true
-elif [[ "$codec_abi" =~ ^[0-9]+$ ]] && apt-cache show "libavcodec$codec_abi" 2>/dev/null |
-     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'; then
-  codec_candidate="libavcodec$codec_abi"
-  echo "[Kali Linux] Installing Firefox-compatible ARM64 codec package: $codec_candidate"
-  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
-    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-    install -y --no-install-recommends "$codec_candidate"
-  ldconfig 2>/dev/null || true
-else
-  echo "[Kali Linux] No ARM64 FFmpeg codec package was found in Firefox ESR recommendations or ABI fallback."
-  echo "[Kali Linux] Firefox VP9/Opus software decoding remains enabled; H.264/AAC may be unavailable without the matching codec package."
+codec_candidate=""
+
+package_supports_kali_arm64() {
+  local package="$1"
+  apt-cache show "$package" 2>/dev/null |
+    awk '/^Architecture:/ { if ($2 == "arm64" || $2 == "all") found=1 } END { exit !found }'
+}
+
+if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
+  for candidate in "libavcodec-extra$codec_abi" "libavcodec$codec_abi"; do
+    if package_supports_kali_arm64 "$candidate"; then
+      codec_candidate="$candidate"
+      break
+    fi
+  done
 fi
 
+# If the system FFmpeg ABI is not installed yet, use only direct, available Firefox
+# recommendations. Angle-bracket alternatives are virtual/missing candidates and skipped.
+if [[ -z "$codec_candidate" ]]; then
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if package_supports_kali_arm64 "$candidate"; then
+      codec_candidate="$candidate"
+      break
+    fi
+  done < <(
+    apt-cache depends firefox-esr 2>/dev/null |
+      sed -nE 's/^[[:space:]]*Recommends:[[:space:]]+(libavcodec-extra[0-9]+|libavcodec[0-9]+)$/\1/p'
+  )
+fi
+
+if [[ -n "$codec_candidate" ]]; then
+  echo "[Kali Linux] Installing Firefox ESR codec package for FFmpeg ABI ${codec_abi:-from-recommendation}: $codec_candidate"
+  if run_with_package_heartbeat "installing Firefox ESR codec package $codec_candidate" \
+      env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" \
+      --no-install-recommends install -y "$codec_candidate"; then
+    ldconfig 2>/dev/null || true
+    if package_installed "$codec_candidate"; then
+      echo "[Kali Linux] Verified Firefox codec package: $codec_candidate"
+    else
+      echo "[Kali Linux] WARNING: codec package $codec_candidate did not reach install ok installed."
+    fi
+  else
+    echo "[Kali Linux] WARNING: could not install matching Firefox codec package $codec_candidate."
+  fi
+else
+  echo "[Kali Linux] No matching ARM64 FFmpeg codec package was found."
+  echo "[Kali Linux] VP9/Opus software decoding remains enabled; H.264/AAC may be unavailable."
+fi
 # Install Google Chrome ARM64 from Google's signed repository first.
 if ! package_installed google-chrome-stable; then
   key_tmp="$(mktemp)"
@@ -369,7 +393,7 @@ diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
   echo "=== Firefox launch-time diagnostics $(date -Is) ==="
   echo "Firefox binary: $firefox_bin"
   firefox-esr --version 2>&1 || firefox --version 2>&1 || true
-  dpkg-query -W firefox-esr ffmpeg libavcodec63 2>&1 || true
+  dpkg-query -W firefox-esr ffmpeg 'libavcodec*' 2>&1 || true
   echo "=== active graphics environment ==="
   printf 'LIBGL_ALWAYS_SOFTWARE=%s\n' "$LIBGL_ALWAYS_SOFTWARE"
   echo "=== PulseAudio connection and Android sink ==="
@@ -379,6 +403,10 @@ diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
   ffmpeg -hide_banner -decoders 2>&1 | grep -E ' (aac|h264|vp8|vp9|opus) ' || true
   echo "=== Firefox shared codec backend ==="
   find /usr/lib/firefox-esr /usr/lib/firefox -maxdepth 2 -name 'libmozavcodec.so' -type f -print 2>/dev/null || true
+  if [[ -s /usr/lib/firefox-esr/libmozavcodec.so ]]; then
+    echo "=== Firefox FFmpeg backend dependency resolution ==="
+    LD_LIBRARY_PATH="/usr/lib/firefox-esr:${LD_LIBRARY_PATH:-}" ldd /usr/lib/firefox-esr/libmozavcodec.so 2>&1 || true
+  fi
   echo "=== active DroidDesk Firefox preferences ==="
   grep -hE 'layers\.acceleration|gfx\.webrender|gfx\.canvas|gfx\.x11-egl|media\.(rdd-process|rdd-ffmpeg|ffvpx|ffmpeg|mediasource|webm)' \
     /usr/lib/firefox-esr/defaults/pref/droiddesk-media.js \
@@ -503,7 +531,11 @@ diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
     for library in libmozsandbox.so libgkcodecs.so liblgpllibs.so libmozsqlite3.so libmozgtk.so libmozwayland.so libmozavcodec.so; do
       if [[ -s "/usr/lib/firefox-esr/$library" ]]; then echo "PRESENT /usr/lib/firefox-esr/$library"; else echo "MISSING /usr/lib/firefox-esr/$library"; fi
     done
-    ldd /usr/lib/firefox-esr/libxul.so 2>&1 | grep -E 'not found|libavcodec|libavutil' || true
+    LD_LIBRARY_PATH="/usr/lib/firefox-esr:${LD_LIBRARY_PATH:-}" ldd /usr/lib/firefox-esr/libxul.so 2>&1 | grep -E 'not found|libavcodec|libavutil' || true
+    if [[ -s /usr/lib/firefox-esr/libmozavcodec.so ]]; then
+      echo "=== Firefox FFmpeg backend dependencies ==="
+      LD_LIBRARY_PATH="/usr/lib/firefox-esr:${LD_LIBRARY_PATH:-}" ldd /usr/lib/firefox-esr/libmozavcodec.so 2>&1 | grep -E 'not found|libavcodec|libavutil' || true
+    fi
   fi
   echo "=== Active DroidDesk media preferences ==="
   grep -hE 'media\.(rdd-process|rdd-ffmpeg|ffvpx|ffmpeg|mediasource|webm|av1)' \
