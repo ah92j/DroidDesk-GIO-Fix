@@ -3051,14 +3051,30 @@ class LinuxRuntime(private val context: Context) {
             return false
         }
         onProgress(0.1, "Refreshing Kali ARM64 repositories...")
+        // Update only user-facing packages. Never run a blanket apt upgrade that can
+        // replace libc, dpkg, the Kali metapackage, XFCE or the PRoot desktop base.
+        val packages = getKaliUpgradablePackages(rootfs, refresh = true)
+            .mapNotNull { it["name"]?.toString() }
+            .filter { isSafePackageName(it) && !isKaliStoreProtectedPackage(it) }
+            .distinct()
+        if (packages.isEmpty()) {
+            onProgress(1.0, "All available Kali applications are up to date")
+            return true
+        }
+        val packageArgs = packages.joinToString(" ") { "'$it'" }
+        val script = "set -Eeuo pipefail; test \"$(dpkg --print-architecture)\" = arm64; " +
+            "DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 --only-upgrade install -y $packageArgs"
         val result = runKaliStoreCommand(
             rootfs,
-            "set -Eeuo pipefail; test \"$(dpkg --print-architecture)\" = arm64; apt-get -o Acquire::Retries=3 update; DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+            script,
             timeoutMinutes = 60,
             onProgress = onProgress,
         )
         val succeeded = result.exitCode == 0
-        onProgress(if (succeeded) 1.0 else -1.0, if (succeeded) "Kali package upgrades completed" else "Kali package upgrades failed")
+        onProgress(
+            if (succeeded) 1.0 else -1.0,
+            if (succeeded) "Kali application updates completed" else "Some Kali application updates failed",
+        )
         return succeeded
     }
 
