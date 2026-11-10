@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # 1.4.28+45 package recovery and Firefox media release
+name: DroidDesk Permanent Release Build # final verified 1.4.28+45 publish trigger
 
 on:
   workflow_dispatch:
