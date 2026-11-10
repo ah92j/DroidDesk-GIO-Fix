@@ -98,4 +98,4 @@ jobs:
               --notes "$NOTES" \
               --latest
           fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,isLatest,assets
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,assets
