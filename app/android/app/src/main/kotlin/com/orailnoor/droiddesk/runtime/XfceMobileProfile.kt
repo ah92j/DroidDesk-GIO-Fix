@@ -175,14 +175,13 @@ object XfceMobileProfile {
 
     /** Maximizes every normal window so apps never open wider than a portrait phone screen. */
     private fun installAutoMaximize(homeDir: File) {
-        File(homeDir, ".config/devilspie2/droiddesk-maximize.lua").apply {
-            parentFile?.mkdirs()
-            writeText(
+        val maximize = File(homeDir, ".config/devilspie2/droiddesk-maximize.lua")
+        if (!maximize.isFile) {
+            maximize.parentFile?.mkdirs()
+            maximize.writeText(
                 """
                 -- Managed by DroidDesk: dialogs, menus and splash screens keep their own size.
                 if get_window_type() == "WINDOW_TYPE_NORMAL" then
-                  -- Fit the window to the screen first so "restore" returns to a size
-                  -- that is still usable on a phone, then open it maximized.
                   if get_screen_geometry then
                     local screen_w, screen_h = get_screen_geometry()
                     local w = math.floor(screen_w * 0.9)
@@ -194,9 +193,10 @@ object XfceMobileProfile {
                 """.trimIndent() + "\n",
             )
         }
-        File(homeDir, ".config/autostart/droiddesk-automax.desktop").apply {
-            parentFile?.mkdirs()
-            writeText(
+        val autostart = File(homeDir, ".config/autostart/droiddesk-automax.desktop")
+        if (!autostart.isFile) {
+            autostart.parentFile?.mkdirs()
+            autostart.writeText(
                 """
                 [Desktop Entry]
                 Type=Application
@@ -269,22 +269,22 @@ object XfceMobileProfile {
      * resolve to a proportional Android font and terminals draw every letter in a wide cell.
      */
     private fun installMonospaceFontRule(homeDir: File) {
-        File(homeDir, ".config/fontconfig/conf.d/60-droiddesk-monospace.conf").apply {
-            parentFile?.mkdirs()
-            writeText(
-                """
-                <?xml version="1.0"?>
-                <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-                <!-- Managed by DroidDesk -->
-                <fontconfig>
-                  <alias binding="strong">
-                    <family>monospace</family>
-                    <prefer><family>$MONOSPACE_FONT</family></prefer>
-                  </alias>
-                </fontconfig>
-                """.trimIndent() + "\n",
-            )
-        }
+        val file = File(homeDir, ".config/fontconfig/conf.d/60-droiddesk-monospace.conf")
+        if (file.isFile) return
+        file.parentFile?.mkdirs()
+        file.writeText(
+            """
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+            <!-- Managed by DroidDesk -->
+            <fontconfig>
+              <alias binding="strong">
+                <family>monospace</family>
+                <prefer><family>$MONOSPACE_FONT</family></prefer>
+              </alias>
+            </fontconfig>
+            """.trimIndent() + "\n",
+        )
     }
 
     private fun panelConfig(): String = """
