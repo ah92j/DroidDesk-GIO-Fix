@@ -23,7 +23,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
   [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v8" ]]
-  grep -q "libavcodec-extra\\$abi" "$0"
+  grep -Fq 'codec_package="libavcodec-extra$abi"' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
   grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
   grep -q "Preserve existing XFCE preferences" "$0"
@@ -289,7 +289,7 @@ diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
   echo "=== Firefox and codec package candidates ==="
   apt-cache policy firefox-esr libavcodec-extra62 libavcodec-extra63 2>/dev/null || true
   echo "=== Installed FFmpeg codec ABI alternatives ==="
-  dpkg-query -W -f="${Status} ${Architecture}\\n" "libavcodec-extra*" 2>/dev/null || true
+  dpkg-query -W -f='${Status} ${Architecture}\\n' 'libavcodec-extra*' 2>/dev/null || true
   echo "=== FFmpeg libraries ==="
   dpkg-query -W 'libavcodec*' 2>/dev/null || true
   ldconfig -p 2>/dev/null | grep 'libavcodec.so' || true
