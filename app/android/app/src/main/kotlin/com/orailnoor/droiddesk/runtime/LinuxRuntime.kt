@@ -11,6 +11,8 @@ import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Core Linux runtime engine.
@@ -73,6 +75,7 @@ class LinuxRuntime(private val context: Context) {
         @Volatile private var dbusProcess: Process? = null
         @Volatile private var pulseProcess: Process? = null
         private val kaliDesktopMigrationLock = Any()
+        private val kaliAptTransactionLock = ReentrantLock(true)
         @Volatile private var kaliDesktopMigrationRunning = false
     }
 
@@ -864,7 +867,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v9")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v10")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -904,7 +907,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v9").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v10").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -923,16 +926,18 @@ class LinuxRuntime(private val context: Context) {
         }
         Thread({
             try {
-                if (!repairKaliDesktopSupport(rootfs)) {
-                    Log.w(TAG, "Kali post-launch GTK/D-Bus repair did not complete")
-                }
-                if (!ensureKaliGlycinAndroidCompatibility(rootfs)) {
-                    Log.w(TAG, "Kali post-launch Glycin repair did not complete")
-                }
-                if (ensureKaliDesktopExperience(rootfs)) {
-                    applyKaliDesktopSettingsToRunningSession(rootfs)
-                } else {
-                    Log.w(TAG, "Kali post-launch desktop migration did not complete")
+                kaliAptTransactionLock.withLock {
+                    if (!repairKaliDesktopSupport(rootfs)) {
+                        Log.w(TAG, "Kali post-launch GTK/D-Bus repair did not complete")
+                    }
+                    if (!ensureKaliGlycinAndroidCompatibility(rootfs)) {
+                        Log.w(TAG, "Kali post-launch Glycin repair did not complete")
+                    }
+                    if (ensureKaliDesktopExperience(rootfs)) {
+                        applyKaliDesktopSettingsToRunningSession(rootfs)
+                    } else {
+                        Log.w(TAG, "Kali post-launch desktop migration did not complete")
+                    }
                 }
             } catch (error: Exception) {
                 Log.w(TAG, "Kali post-launch desktop migration failed", error)
@@ -2814,7 +2819,7 @@ class LinuxRuntime(private val context: Context) {
         script: String,
         timeoutMinutes: Long = 30,
         onProgress: (Double, String) -> Unit,
-    ): KaliProotResult {
+    ): KaliProotResult = kaliAptTransactionLock.withLock {
         val result = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/root",
@@ -2822,14 +2827,74 @@ class LinuxRuntime(private val context: Context) {
             timeoutMinutes = timeoutMinutes,
             onOutput = { line ->
                 installLogSink?.invoke(line)
-                if (line.isNotBlank()) onProgress(0.55, line.trim().take(180))
+                if (line.isNotBlank()) {
+                    Log.i(TAG, "Kali App Store: ${line.trimEnd()}")
+                    onProgress(0.55, line.trim().take(180))
+                }
             },
             onProcessStarted = { process -> activeCommandProcess = process },
         )
-        if (activeCommandProcess != null && !activeCommandProcess!!.isAlive) {
-            activeCommandProcess = null
+        if (activeCommandProcess != null && !activeCommandProcess!!.isAlive) activeCommandProcess = null
+        result
+    }
+
+    private fun refreshKaliPackageIndexes(
+        rootfs: File,
+        force: Boolean = false,
+        onProgress: (Double, String) -> Unit = { _, _ -> },
+    ): Boolean = kaliAptTransactionLock.withLock {
+        val listsDir = File(rootfs, "var/lib/apt/lists")
+        val hasPackageLists = listsDir.listFiles()?.any { it.isFile && it.name.contains("_Packages") } == true
+        val cacheDir = File(rootfs, "root/.cache/droiddesk").apply { mkdirs() }
+        val stamp = File(cacheDir, "kali-package-index-updated")
+        val attempt = File(cacheDir, "kali-package-index-attempt")
+        val now = System.currentTimeMillis()
+        val fresh = stamp.isFile && now - stamp.lastModified() in 0..(6L * 60L * 60L * 1000L)
+        if (!force && hasPackageLists && fresh) return@withLock true
+        if (!force && attempt.isFile && now - attempt.lastModified() in 0..(3L * 60L * 1000L)) return@withLock hasPackageLists
+        attempt.writeText(now.toString())
+        onProgress(0.12, "Refreshing Kali ARM64 application catalog...")
+        val script = """
+            set -Eeuo pipefail
+            native_arch="${'$'}(/usr/bin/dpkg --print-architecture)"
+            if [ "${'$'}native_arch" != "arm64" ]; then
+              echo "Expected Kali arm64, found ${'$'}native_arch."
+              exit 31
+            fi
+            install -d -m 0755 /home/kali/.local/share/droiddesk
+            exec > >(tee -a /home/kali/.local/share/droiddesk/package-store-install.log) 2>&1
+            echo "[DroidDesk App Store] Refreshing Kali ARM64 package indexes..."
+            apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=45 \
+              -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true \
+              -o Dpkg::Use-Pty=0 update
+            if ! find /var/lib/apt/lists -maxdepth 1 -type f -name '*_Packages*' -print -quit | grep -q .; then
+              echo "APT update returned no package indexes."
+              exit 44
+            fi
+            chmod 0644 /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true
+            chown kali:kali /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true
+        """.trimIndent()
+        val result = runKaliProotCommand(
+            rootfs = rootfs, workingDirectory = "/root",
+            guestCommand = kaliStoreCommand(script), timeoutMinutes = 15,
+            onOutput = { line ->
+                installLogSink?.invoke(line)
+                if (line.isNotBlank()) onProgress(0.45, line.trim().take(180))
+            },
+        )
+        if (result.exitCode == 0) {
+            stamp.writeText(System.currentTimeMillis().toString())
+            Log.i(TAG, "Kali ARM64 package indexes refreshed successfully")
+            return@withLock true
         }
-        return result
+        Log.w(TAG, "Kali package index refresh failed: ${'$'}{result.output.takeLast(1400)}")
+        if (hasPackageLists) {
+            onProgress(0.20, "Repository refresh failed; using the cached ARM64 package list.")
+            return@withLock true
+        }
+        onProgress(-1.0, "Kali ARM64 catalog could not be refreshed. Check internet and package-store-install.log.")
+        false
     }
 
     private fun kaliInstalledPackageRecords(rootfs: File): List<Map<String, Any>> {
