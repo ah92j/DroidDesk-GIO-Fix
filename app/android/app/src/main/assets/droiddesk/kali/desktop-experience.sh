@@ -33,6 +33,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q "policy-rc.d" "$0"
   grep -q "Still working:" "$0"
   grep -q "pulse_ready=0" "$0"
+  grep -q "export LIBGL_ALWAYS_SOFTWARE=1" "$0"
+  grep -q 'gfx.webrender.software' "$0"
+  grep -q 'layers.acceleration.disabled' "$0"
+  grep -q "launch-time diagnostics" "$0"
   grep -q "kali-wallpapers-2026" "$0"
   ! grep -Eq '(^|[[:space:]])--install-recommends([[:space:]]|$)' "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
@@ -299,6 +303,9 @@ set -euo pipefail
 export PULSE_SERVER=tcp:127.0.0.1:4713
 export PULSE_SINK=droiddesk_android
 export PULSE_LATENCY_MSEC=80
+# PRoot's X11/GL stack cannot supply the DRI3 shader features Firefox probes.
+# Force stable Mesa software rendering and the software WebRender backend.
+export LIBGL_ALWAYS_SOFTWARE=1
 export MOZ_DISABLE_CONTENT_SANDBOX=1
 export MOZ_DISABLE_RDD_SANDBOX=1
 export MOZ_DISABLE_GMP_SANDBOX=1
@@ -330,13 +337,38 @@ fi
 firefox_log="/home/kali/.local/share/droiddesk/firefox-launch.log"
 install -d -m 0755 "$(dirname "$firefox_log")"
 {
-  printf '%s\\n' "=== Firefox launch $(date -Is) ==="
-  printf '%s\\n' "PULSE_SERVER=$PULSE_SERVER"
+  printf '%s\n' "=== Firefox launch $(date -Is) ==="
+  printf '%s\n' "PULSE_SERVER=$PULSE_SERVER"
+  printf '%s\n' "LIBGL_ALWAYS_SOFTWARE=$LIBGL_ALWAYS_SOFTWARE"
   pactl -s "$PULSE_SERVER" info 2>&1 || true
   pactl -s "$PULSE_SERVER" list short sinks 2>&1 || true
   ldconfig -p 2>/dev/null | grep -E "libavcodec|libavutil" || true
 } >> "$firefox_log" 2>&1
+# Regenerate media diagnostics at launch time, after DroidDesk has started PulseAudio.
+diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
+{
+  echo "=== Firefox launch-time diagnostics $(date -Is) ==="
+  echo "Firefox binary: $firefox_bin"
+  firefox-esr --version 2>&1 || firefox --version 2>&1 || true
+  dpkg-query -W firefox-esr ffmpeg libavcodec63 2>&1 || true
+  echo "=== active graphics environment ==="
+  printf 'LIBGL_ALWAYS_SOFTWARE=%s\n' "$LIBGL_ALWAYS_SOFTWARE"
+  echo "=== PulseAudio connection and Android sink ==="
+  pactl -s "$PULSE_SERVER" info 2>&1 || true
+  pactl -s "$PULSE_SERVER" list short sinks 2>&1 || true
+  echo "=== software codec support ==="
+  ffmpeg -hide_banner -decoders 2>&1 | grep -E ' (aac|h264|vp8|vp9|opus) ' || true
+  echo "=== Firefox shared codec backend ==="
+  find /usr/lib/firefox-esr /usr/lib/firefox -maxdepth 2 -name 'libmozavcodec.so' -type f -print 2>/dev/null || true
+  echo "=== active DroidDesk Firefox preferences ==="
+  grep -hE 'layers\.acceleration|gfx\.webrender|gfx\.canvas|gfx\.x11-egl|media\.(rdd-process|rdd-ffmpeg|ffvpx|ffmpeg|mediasource|webm)' \
+    /usr/lib/firefox-esr/defaults/pref/droiddesk-media.js \
+    /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
+} > "$diagnostic_file" 2>&1
+chmod 0644 "$diagnostic_file" 2>/dev/null || true
+
 echo "[DroidDesk Audio] Firefox launch diagnostics: $firefox_log"
+echo "[DroidDesk Media] Fresh media diagnostics: $diagnostic_file"
 exec "$firefox_bin" "$@" >> "$firefox_log" 2>&1
 FIREFOX
 chmod 0755 /home/kali/.local/bin/droiddesk-firefox
@@ -367,6 +399,10 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
     cat > "$pref_dir/droiddesk-media.js" <<'FIREFOX_PREFS'
 pref("media.cubeb.sandbox", false);
 pref("media.cubeb.backend", "pulse");
+pref("layers.acceleration.disabled", true);
+pref("gfx.webrender.software", true);
+pref("gfx.canvas.accelerated", false);
+pref("gfx.x11-egl.force-disabled", true);
 pref("media.ffmpeg.enabled", true);
 pref("media.rdd-ffmpeg.enabled", true);
 pref("media.ffvpx.enabled", true);
@@ -400,6 +436,10 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
     done <<'FIREFOX_USER_PREFS'
 user_pref("media.cubeb.sandbox", false);
 user_pref("media.cubeb.backend", "pulse");
+user_pref("layers.acceleration.disabled", true);
+user_pref("gfx.webrender.software", true);
+user_pref("gfx.canvas.accelerated", false);
+user_pref("gfx.x11-egl.force-disabled", true);
 user_pref("media.ffmpeg.enabled", true);
 user_pref("media.rdd-ffmpeg.enabled", true);
 user_pref("media.ffvpx.enabled", true);
