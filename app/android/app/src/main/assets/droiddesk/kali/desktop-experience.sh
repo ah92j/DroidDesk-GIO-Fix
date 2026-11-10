@@ -104,41 +104,33 @@ if ! package_installed firefox-esr; then
   exit 22
 fi
 
-# Firefox's FFmpeg backend must find the matching ARM64 codec ABI. Kali Rolling
-# currently publishes ABI 62 and 63; detect the available package instead of
-# assuming one fixed FFmpeg generation or downloading an x86_64 codec library.
-# Use the codec package recommended by this exact Firefox ESR package first.
-# Fall back to the installed FFmpeg SONAME for Kali builds with empty recommendation metadata.
-mapfile -t codec_candidates < <(
-  apt-cache depends firefox-esr 2>/dev/null |
-    grep -E 'Recommends:|^[[:space:]]+or ' |
-    grep -oE 'libavcodec(-extra)?[0-9]+' |
-    awk '!seen[$0]++'
-)
-if ((${#codec_candidates[@]} == 0)); then
-  codec_abi="$(ldconfig -p 2>/dev/null |
-    sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
-    sort -rn | head -n1)
-  if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
-    codec_candidates=("libavcodec-extra$codec_abi" "libavcodec$codec_abi")
-  fi
+# Prefer the FFmpeg package recommended by the installed Firefox ESR build.
+# Fall back to the ABI exposed by the system FFmpeg libraries when recommendations are absent.
+codec_candidate="$(apt-cache depends firefox-esr 2>/dev/null |
+  sed -nE 's/.*(libavcodec(-extra)?[0-9]+).*/\1/p' | head -n1)"
+codec_abi="$(ldconfig -p 2>/dev/null |
+  sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
+  sort -rn | head -n1)"
+if [[ -z "$codec_candidate" && "$codec_abi" =~ ^[0-9]+$ ]]; then
+  codec_candidate="libavcodec-extra$codec_abi"
 fi
-codec_package=""
-for candidate in "${codec_candidates[@]}"; do
-  if apt-cache show "$candidate" 2>/dev/null |
-     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'; then
-    codec_package="$candidate"
-    break
-  fi
-done
-if [[ -n "$codec_package" ]]; then
-  echo "[Kali Linux] Installing Firefox ESR recommended ARM64 codec package: $codec_package"
+if [[ -n "$codec_candidate" ]] && apt-cache show "$codec_candidate" 2>/dev/null |
+   awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'; then
+  echo "[Kali Linux] Installing Firefox ESR codec package: $codec_candidate"
   apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-    install -y --no-install-recommends "$codec_package"
+    install -y --no-install-recommends "$codec_candidate"
+  ldconfig 2>/dev/null || true
+elif [[ "$codec_abi" =~ ^[0-9]+$ ]] && apt-cache show "libavcodec$codec_abi" 2>/dev/null |
+     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'; then
+  codec_candidate="libavcodec$codec_abi"
+  echo "[Kali Linux] Installing Firefox-compatible ARM64 codec package: $codec_candidate"
+  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+    install -y --no-install-recommends "$codec_candidate"
   ldconfig 2>/dev/null || true
 else
-  echo "[Kali Linux] No ARM64 FFmpeg codec package from Firefox ESR recommendations was found."
+  echo "[Kali Linux] No ARM64 FFmpeg codec package was found in Firefox ESR recommendations or ABI fallback."
   echo "[Kali Linux] Firefox VP9/Opus software decoding remains enabled; H.264/AAC may be unavailable without the matching codec package."
 fi
 
