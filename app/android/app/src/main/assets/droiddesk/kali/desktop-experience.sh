@@ -30,6 +30,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'Install the XFCE Applications menu on the bottom panel' "$0"
   grep -q 'applicationsmenu' "$0"
   grep -q 'show-menu-icons' "$0"
+  grep -q 'panel-with-applications-menu.xml' "$0"
+  grep -q 'Saved the updated panel XML' "$0"
   grep -q 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' "$0"
   grep -q 'archive.kali.org/kali/' "$0"
   grep -Fq 'libavcodec-extra$codec_abi' "$0"
@@ -173,6 +175,17 @@ restore_user_xfce_preferences() {
     else
       echo "[Kali Linux] WARNING: saved XFCE preferences could not be restored."
     fi
+  fi
+
+  # The App Store migration changes the live xfconf panel configuration. Preserve
+  # that updated panel XML across the snapshot restore above, otherwise the EXIT
+  # trap would put the old plugin list back and remove the Applications menu.
+  panel_menu_snapshot="$PRESERVE_DIR/panel-with-applications-menu.xml"
+  panel_config="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+  if [[ -s "$panel_menu_snapshot" ]]; then
+    install -m 0644 "$panel_menu_snapshot" "$panel_config"
+    chown kali:kali "$panel_config" 2>/dev/null || true
+    echo "[DroidDesk Panel] Preserved the Applications menu in the saved bottom-panel configuration."
   fi
   rm -rf "$PRESERVE_DIR"
 }
@@ -998,6 +1011,20 @@ PANEL_MENU
   fi
 else
   echo "[DroidDesk Panel] WARNING: XFCE D-Bus session is not available; menu setup will be retried."
+fi
+
+# Snapshot the now-updated panel XML before the EXIT trap restores the user's
+# original XFCE snapshot. Only this file carries the additive Applications plugin.
+if [[ "$PANEL_MENU_CONFIGURED" -eq 1 ]]; then
+  PANEL_CONFIG_PATH="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+  PANEL_MENU_SNAPSHOT="$PRESERVE_DIR/panel-with-applications-menu.xml"
+  if [[ -s "$PANEL_CONFIG_PATH" ]]; then
+    sleep 1
+    cp -f "$PANEL_CONFIG_PATH" "$PANEL_MENU_SNAPSHOT"
+    echo "[DroidDesk Panel] Saved the updated panel XML so the menu survives migration cleanup."
+  else
+    echo "[DroidDesk Panel] WARNING: panel XML was not written; the Applications menu may need another migration run."
+  fi
 fi
 
 chown -R kali:kali /home/kali/.config /home/kali/.local /home/kali/Desktop /home/kali/Applications 2>/dev/null || true

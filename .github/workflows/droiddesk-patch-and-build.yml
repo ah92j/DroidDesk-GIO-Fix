@@ -118,6 +118,9 @@ jobs:
           desktop_activity = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/view/DesktopActivity.kt'
           ).read_text()
+          x11_server = Path(
+              'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/x11/X11ServerService.kt'
+          ).read_text()
           updater = Path(
               'app/android/app/src/main/kotlin/com/orailnoor/droiddesk/runtime/AppUpdater.kt'
           ).read_text()
@@ -523,6 +526,13 @@ jobs:
               'applicationsmenu' not in desktop_experience_script
           ):
               missing.append('add the native Applications menu to the existing bottom XFCE panel')
+          if (
+              'panel-with-applications-menu.xml' not in desktop_experience_script or
+              'Saved the updated panel XML' not in desktop_experience_script
+          ):
+              missing.append('preserve the new Applications menu after restoring saved XFCE settings')
+          if '"-legacy-drawing"' not in x11_server:
+              missing.append('enable Termux:X11 legacy drawing compatibility for black-surface devices')
           if 'KaliDpkgPackage' not in kali_dpkg_parser or 'install ok installed' not in kali_dpkg_parser:
               missing.append('parse only fully configured Kali ARM64 and architecture-independent packages')
           if '@Test' not in kali_dpkg_parser_tests or 'ignoresUnpackedPackages' not in kali_dpkg_parser_tests:
