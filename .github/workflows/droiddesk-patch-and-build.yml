@@ -440,10 +440,14 @@ jobs:
           if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.24+41' not in pubspec:
-              missing.append('expected release version 1.4.24+41')
+          if 'version: 1.4.25+42' not in pubspec:
+              missing.append('expected release version 1.4.25+42')
           if "static const repo = 'ah92j/DroidDesk-GIO-Fix';" not in update_service:
               missing.append('updater must check releases from the APK publishing repository')
+          if "libavcodec\\.so\\.\\(" not in desktop_experience_script or "if ($2 == wanted) found=1" not in desktop_experience_script:
+              missing.append('detect Firefox FFmpeg ABI and ARM64 package architecture correctly')
+          if "val newVersion = line.substringAfter('/').trim().substringBefore(' ')" not in runtime:
+              missing.append('display package version rather than architecture in the Updates tab')
           if 'bool force = false' not in update_service or 'checkForUpdate(force: true)' not in app_state:
               missing.append('check GitHub for a newer APK as soon as an older app launches')
           if 'Uri.parse(release.apkUrl)' not in update_sheet or 'Direct APK download link' not in update_sheet:
@@ -701,7 +705,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.24-arm64
+          name: Kali-Linux-1.4.25-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14
