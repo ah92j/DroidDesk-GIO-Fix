@@ -26,7 +26,7 @@ class AppRelease {
 
 /// Checks GitHub Releases for a newer DroidDesk build.
 class UpdateService {
-  static const repo = 'orailnoor/DroidDesk';
+  static const repo = 'ah92j/DroidDesk-GIO-Fix';
   // Test builds can point at a local mock: --dart-define=DROIDDESK_UPDATE_URL=http://...
   static const _latestUrl = String.fromEnvironment(
     'DROIDDESK_UPDATE_URL',
@@ -43,9 +43,10 @@ class UpdateService {
   static Future<AppRelease?> check({
     required String installedVersion,
     bool manual = false,
+    bool force = false,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    if (!manual) {
+    if (!manual && !force) {
       final last = prefs.getInt(_lastCheckKey) ?? 0;
       final elapsed = DateTime.now().millisecondsSinceEpoch - last;
       if (elapsed < checkInterval.inMilliseconds) return null;
