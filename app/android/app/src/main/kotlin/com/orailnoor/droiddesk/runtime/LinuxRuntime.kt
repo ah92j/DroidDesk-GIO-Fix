@@ -3231,37 +3231,37 @@ POLICY
 
             # Persist every selected package and expose its GUI launchers on the XFCE desktop.
             store_dir="/home/kali/.local/share/droiddesk"
-            tracked_packages="$store_dir/app-store-packages"
+            tracked_packages="${'$'}store_dir/app-store-packages"
             desktop_dir="/home/kali/Desktop"
-            install -d -m 0755 "$store_dir" "$desktop_dir"
-            touch "$tracked_packages"
-            grep -Fqx "${'$'}package_name" "$tracked_packages" || echo "${'$'}package_name" >> "$tracked_packages"
+            install -d -m 0755 "${'$'}store_dir" "${'$'}desktop_dir"
+            touch "${'$'}tracked_packages"
+            grep -Fqx "${'$'}package_name" "${'$'}tracked_packages" || echo "${'$'}package_name" >> "${'$'}tracked_packages"
             while IFS= read -r desktop_file; do
-              [[ -f "$desktop_file" ]] || continue
-              if grep -Eiq '^(NoDisplay|Hidden)=true' "$desktop_file"; then continue; fi
-              desktop_name="$(basename "$desktop_file")"
-              managed_shortcut="$desktop_dir/${'$'}package_name-$desktop_name"
-              temporary_shortcut="$managed_shortcut.tmp"
+              [[ -f "${'$'}desktop_file" ]] || continue
+              if grep -Eiq '^(NoDisplay|Hidden)=true' "${'$'}desktop_file"; then continue; fi
+              desktop_name="$(basename "${'$'}desktop_file")"
+              managed_shortcut="${'$'}desktop_dir/${'$'}package_name-${'$'}desktop_name"
+              temporary_shortcut="${'$'}managed_shortcut.tmp"
               {
                 printf '# DroidDesk App Store package: %s\n' "${'$'}package_name"
-                cat "$desktop_file"
-              } > "$temporary_shortcut"
-              chmod 0755 "$temporary_shortcut"
-              chown kali:kali "$temporary_shortcut"
-              mv -f "$temporary_shortcut" "$managed_shortcut"
-              echo "[DroidDesk App Store] Added desktop launcher: $managed_shortcut"
+                cat "${'$'}desktop_file"
+              } > "${'$'}temporary_shortcut"
+              chmod 0755 "${'$'}temporary_shortcut"
+              chown kali:kali "${'$'}temporary_shortcut"
+              mv -f "${'$'}temporary_shortcut" "${'$'}managed_shortcut"
+              echo "[DroidDesk App Store] Added desktop launcher: ${'$'}managed_shortcut"
             done < <(
               dpkg-query -L "${'$'}package_name" 2>/dev/null |
                 grep -E '^/(usr/share|usr/local/share)/applications/[^/]+\.desktop$' || true
             )
-            chown kali:kali "$tracked_packages" 2>/dev/null || true
+            chown kali:kali "${'$'}tracked_packages" 2>/dev/null || true
             update-desktop-database /usr/share/applications 2>/dev/null || true
             update-mime-database /usr/share/mime 2>/dev/null || true
             session_address_file="/home/kali/.local/share/droiddesk/dbus-session-address"
-            if [[ -s "$session_address_file" ]] && pgrep -x xfdesktop >/dev/null 2>&1; then
-              session_address="$(cat "$session_address_file")"
+            if [[ -s "${'$'}session_address_file" ]] && pgrep -x xfdesktop >/dev/null 2>&1; then
+              session_address="$(cat "${'$'}session_address_file")"
               sudo -E -u kali env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-kali \
-                DBUS_SESSION_BUS_ADDRESS="$session_address" xfdesktop --reload >/dev/null 2>&1 || true
+                DBUS_SESSION_BUS_ADDRESS="${'$'}session_address" xfdesktop --reload >/dev/null 2>&1 || true
             fi
             echo "[DroidDesk App Store] Verified ${'$'}package_name is installed for ARM64."
         """.trimIndent()
@@ -3307,17 +3307,17 @@ POLICY
             set -Eeuo pipefail
             DEBIAN_FRONTEND=noninteractive apt-get remove -y '$selected'
             tracked="/home/kali/.local/share/droiddesk/app-store-packages"
-            if [ -f "$tracked" ]; then
-              grep -Fvx '$selected' "$tracked" > "$tracked.tmp" || true
-              mv -f "$tracked.tmp" "$tracked"
+            if [ -f "${'$'}tracked" ]; then
+              grep -Fvx '$selected' "${'$'}tracked" > "${'$'}tracked.tmp" || true
+              mv -f "${'$'}tracked.tmp" "${'$'}tracked"
             fi
             for shortcut in /home/kali/Desktop/"$selected"-*.desktop; do
-              [ -f "$shortcut" ] || continue
-              if grep -Fq '# DroidDesk App Store package: $selected' "$shortcut"; then
-                rm -f "$shortcut"
+              [ -f "${'$'}shortcut" ] || continue
+              if grep -Fq '# DroidDesk App Store package: $selected' "${'$'}shortcut"; then
+                rm -f "${'$'}shortcut"
               fi
             done
-            chown kali:kali "$tracked" 2>/dev/null || true
+            chown kali:kali "${'$'}tracked" 2>/dev/null || true
             update-desktop-database /usr/share/applications 2>/dev/null || true
         """.trimIndent()
         val result = runKaliStoreCommand(
