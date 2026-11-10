@@ -7,12 +7,12 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v10"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v11"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
-  kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
+  kali-wallpapers-2026 firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
   ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg file tar
 )
@@ -21,8 +21,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$WALLPAPER_DIR" == "/usr/share/xfce4/backdrops/Kali Linux" ]]
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
-  grep -q 'kali-wallpapers-all' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v10" ]]
+  grep -q 'kali-wallpapers-2026' "$0"
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v11" ]]
   grep -q 'apt-cache depends firefox-esr' "$0"
   grep -q 'libavcodec-extra' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
@@ -30,6 +30,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'user_pref("media.rdd-ffmpeg.enabled", true);' "$0"
   grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
   grep -q "Preserve existing XFCE preferences" "$0"
+  grep -q "policy-rc.d" "$0"
+  grep -q "Still working:" "$0"
+  grep -q "pulse_ready=0" "$0"
+  grep -q "kali-wallpapers-2026" "$0"
+  ! grep -Eq '(^|[[:space:]])--install-recommends([[:space:]]|$)' "$0"
+  ! grep -q "install -y --reinstall firefox-esr" "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
 fi
@@ -41,15 +47,75 @@ package_installed() {
   dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -qx 'install ok installed'
 }
 
+configure_proot_service_policy() {
+  install -d -m 0755 /usr/sbin
+  if [[ ! -e /usr/sbin/policy-rc.d ]]; then
+    cat > /usr/sbin/policy-rc.d <<'POLICY'
+#!/bin/sh
+exit 101
+POLICY
+    chmod 0755 /usr/sbin/policy-rc.d
+  fi
+}
+
+run_with_package_heartbeat() {
+  local label="$1"
+  shift
+  "$@" &
+  local command_pid=$!
+  (
+    while kill -0 "$command_pid" 2>/dev/null; do
+      sleep 15
+      if kill -0 "$command_pid" 2>/dev/null; then
+        latest_event="$(tail -n 1 /var/log/dpkg.log 2>/dev/null || true)"
+        echo "[Kali Linux] Still working: $label. Last dpkg activity: ${latest_event:-No dpkg event recorded yet}"
+      fi
+    done
+  ) &
+  local heartbeat_pid=$!
+  local command_status=0
+  if wait "$command_pid"; then command_status=0; else command_status=$?; fi
+  kill "$heartbeat_pid" 2>/dev/null || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  return "$command_status"
+}
+
+configure_proot_service_policy
+APT_OPTIONS=(
+  -o Acquire::ForceIPv4=true
+  -o Acquire::Retries=3
+  -o Acquire::http::Timeout=25
+  -o Acquire::https::Timeout=45
+  -o Acquire::https::Verify-Peer=true
+  -o Acquire::https::Verify-Host=true
+  -o APT::Keep-Downloaded-Packages=true
+  -o Dpkg::Use-Pty=0
+  -o Dpkg::Options::=--force-confdef
+  -o Dpkg::Options::=--force-confold
+)
+
+run_with_package_heartbeat "refreshing Kali ARM64 package indexes" apt-get "${APT_OPTIONS[@]}" update
+if ! run_with_package_heartbeat "finishing interrupted package configuration" dpkg --configure -a; then
+  run_with_package_heartbeat "repairing interrupted package dependencies" env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --fix-broken install -y --no-install-recommends
+  run_with_package_heartbeat "completing repaired package configuration" dpkg --configure -a
+fi
+if dpkg --audit | grep -q .; then
+  run_with_package_heartbeat "repairing incomplete package database" env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --fix-broken install -y --no-install-recommends
+  run_with_package_heartbeat "finishing package database repair" dpkg --configure -a
+fi
+if dpkg --audit | grep -q .; then
+  echo "[Kali Linux] dpkg still reports incomplete packages; migration stopped safely."
+  exit 23
+fi
+
 missing_packages=()
 for package in "${REQUIRED_PACKAGES[@]}"; do
   if ! package_installed "$package"; then missing_packages+=("$package"); fi
 done
 
 if (("${#missing_packages[@]}" > 0)); then
-  echo "[Kali Linux] Installing browser codecs, wallpapers and package-installer support..."
-  apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=45 -o Dpkg::Use-Pty=0 update
-  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --no-install-recommends "${missing_packages[@]}"
+  echo "[Kali Linux] Installing only required ARM64 desktop, codecs and installer support (without optional recommendations)..."
+  run_with_package_heartbeat "installing required desktop packages" env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --no-install-recommends install -y "${missing_packages[@]}"
 fi
 
 for package in "${REQUIRED_PACKAGES[@]}"; do
@@ -95,12 +161,11 @@ if ((${#PRESERVE_ITEMS[@]} > 0)); then
   fi
 fi
 
-# Refresh Firefox ESR and install its currently recommended FFmpeg ABI.
-echo "[Kali Linux] Refreshing Firefox ESR and its matching FFmpeg codec recommendation..."
-apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=45 -o Dpkg::Use-Pty=0 update
-apt-get --install-recommends -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y --reinstall firefox-esr
+# Ensure Firefox exists without forcing a reinstall or pulling optional recommendations.
+echo "[Kali Linux] Ensuring Firefox ESR is configured for ARM64..."
+run_with_package_heartbeat "installing or verifying Firefox ESR" env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --no-install-recommends install -y firefox-esr
 if ! package_installed firefox-esr; then
-  echo "[Kali Linux] Firefox ESR is not configured after its upgrade."
+  echo "[Kali Linux] Firefox ESR is not configured after package recovery."
   exit 22
 fi
 
@@ -240,9 +305,23 @@ export MOZ_DISABLE_RDD_SANDBOX=1
 export MOZ_DISABLE_GMP_SANDBOX=1
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
-if command -v pactl >/dev/null 2>&1 && pactl info >/dev/null 2>&1; then
-  pactl set-default-sink droiddesk_android >/dev/null 2>&1 || true
-  pactl set-sink-mute droiddesk_android 0 >/dev/null 2>&1 || true
+pulse_ready=0
+if command -v pactl >/dev/null 2>&1; then
+  for attempt in $(seq 1 15); do
+    if pactl -s "$PULSE_SERVER" list short sinks 2>/dev/null |
+       awk '$2 == "droiddesk_android" { found=1 } END { exit !found }'; then
+      pulse_ready=1
+      break
+    fi
+    sleep 1
+  done
+fi
+if [[ "$pulse_ready" -eq 1 ]]; then
+  pactl -s "$PULSE_SERVER" set-default-sink droiddesk_android >/dev/null 2>&1 || true
+  pactl -s "$PULSE_SERVER" set-sink-mute droiddesk_android 0 >/dev/null 2>&1 || true
+  echo "[DroidDesk Audio] Firefox connected to the Android AudioTrack sink."
+else
+  echo "[DroidDesk Audio] ERROR: droiddesk_android PulseAudio sink is unavailable; inspect /tmp/pulse/pulseaudio.log and DroidDesk runtime logs."
 fi
 firefox_bin="$(command -v firefox-esr || command -v firefox || true)"
 if [[ -z "$firefox_bin" ]]; then
@@ -495,7 +574,7 @@ case "$lower_file" in
           package_spec="$deb_name"
           if [[ "$candidate_arch" == "arm64" ]]; then package_spec="$deb_name:arm64"; fi
           echo "[DroidDesk Installer] Installing compatible repository package $package_spec."
-          if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --install-recommends install -y "$package_spec"; then
+          if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-install-recommends install -y "$package_spec"; then
             package_status="$(dpkg-query -W -f='${Status}' "$deb_name" 2>/dev/null || true)"
             if [[ "$package_status" == "install ok installed" ]]; then
               sudo -n update-desktop-database /usr/share/applications 2>/dev/null || true
@@ -531,7 +610,7 @@ If the publisher does not provide an ARM64 build, this exact download cannot be 
     fi
 
     install_ok=0
-    if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --install-recommends install -y "$file"; then
+    if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-install-recommends install -y "$file"; then
       install_ok=1
     else
       echo "[DroidDesk Installer] APT local-file install failed; trying dpkg followed by dependency repair."

@@ -141,7 +141,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v10',
+              'desktop-experience-v11',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -440,16 +440,21 @@ jobs:
           if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.27+44' not in pubspec:
-              missing.append('expected release version 1.4.27+44')
+          if 'version: 1.4.28+45' not in pubspec:
+              missing.append('expected release version 1.4.28+45')
           if 'private val kaliAptTransactionLock = ReentrantLock(true)' not in runtime or 'kaliAptTransactionLock.withLock' not in runtime:
               missing.append('serialize Kali App Store APT operations against desktop migrations')
           if 'private fun refreshKaliPackageIndexes(' not in runtime or 'apt-get -o Acquire::ForceIPv4=true' not in runtime:
               missing.append('refresh Kali ARM64 package indexes before Browse and Install')
           if 'kali-package-index-updated' not in runtime or 'package-store-install.log' not in runtime:
               missing.append('cache package-index freshness and write readable App Store diagnostics')
-          if '--install-recommends' not in runtime or '--fix-broken install' not in runtime:
-              missing.append('resolve application dependencies and repair interrupted dpkg state')
+          if ' --install-recommends ' in runtime or '--no-install-recommends' not in runtime or '--fix-broken install' not in runtime or 'run_package_heartbeat' not in runtime or 'dpkg --configure -a' not in runtime:
+              missing.append('repair interrupted dpkg state before installs and avoid large optional recommendation trees')
+          store_command_start = runtime.find('private fun runKaliStoreCommand(')
+          store_command_end = runtime.find('private fun refreshKaliPackageIndexes(', store_command_start)
+          store_command = runtime[store_command_start:store_command_end]
+          if 'onProgress(0.55' in store_command or 'Reading database.*?([0-9]{1,3})%' not in store_command:
+              missing.append('report actual APT stages instead of a fixed 55 percent value')
           if 'refreshKaliPackageIndexes(rootfs, force = true, onProgress = onProgress)' not in runtime:
               missing.append('force a fresh ARM64 package index before App Store installs')
           if 'Wrong package architecture.' not in desktop_experience_script or 'Related repository matches' not in desktop_experience_script:
@@ -499,7 +504,7 @@ jobs:
               missing.append('Android launcher label must be Kali Linux')
           if "Text('Kali Linux', style: DroidTheme.headingMd)" not in home_screen:
               missing.append('home dashboard title must be Kali Linux')
-          for package in ['gvfs', 'gvfs-daemons', 'gvfs-backends', 'kali-wallpapers-all', 'firefox-esr', 'libpulse0', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'gstreamer1.0-libav']:
+          for package in ['gvfs', 'gvfs-daemons', 'gvfs-backends', 'kali-wallpapers-2026', 'firefox-esr', 'libpulse0', 'pulseaudio-utils', 'libasound2-plugins', 'ffmpeg', 'gstreamer1.0-libav']:
               if package not in desktop_experience_script:
                   missing.append(f'desktop-experience migration must install {package}')
           if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
@@ -508,7 +513,7 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v10' not in desktop_experience_script or 'desktop-experience-v10' not in runtime:
+          if 'desktop-experience-v11' not in desktop_experience_script or 'desktop-experience-v11' not in runtime:
               missing.append('use the same v8 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
@@ -525,8 +530,14 @@ jobs:
               missing.append('enable explicit Firefox WebM audio/video MSE preferences')
           if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled", true' not in desktop_experience_script:
               missing.append('keep Firefox RDD enabled and expose the system FFmpeg decoder')
-          if 'apt-get --install-recommends' not in desktop_experience_script or 'install -y --reinstall firefox-esr' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
-              missing.append('install the matching ARM64 FFmpeg codec ABI and disable incompatible RDD sandbox in PRoot')
+          if ' --install-recommends ' in desktop_experience_script or '--no-install-recommends install -y firefox-esr' not in desktop_experience_script or 'install -y --reinstall firefox-esr' in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
+              missing.append('install Firefox and matching ARM64 FFmpeg codec ABI without forced reinstall or optional recommendations')
+          if 'kali-wallpapers-all' in desktop_experience_script or 'kali-wallpapers-2026' not in desktop_experience_script:
+              missing.append('avoid the multi-gigabyte kali-wallpapers-all metapackage')
+          if 'pulse_ready=0' not in desktop_experience_script or 'list short sinks' not in desktop_experience_script:
+              missing.append('verify Firefox audio bridge reaches Android AudioTrack sink')
+          if 'Still working:' not in desktop_experience_script or 'policy-rc.d' not in desktop_experience_script:
+              missing.append('add PRoot service-start protection and dpkg heartbeats')
           if 'file -b "$file"' not in desktop_experience_script or 'Download the ARM64 AppImage' not in desktop_experience_script:
               missing.append('validate AppImage architecture before creating launcher')
           if 'dpkg-deb -f "$file" Architecture' not in desktop_experience_script or '--fix-broken install' not in desktop_experience_script or 'package-install.log' not in desktop_experience_script:
@@ -731,7 +742,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.27-arm64
+          name: Kali-Linux-1.4.28-arm64
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 14

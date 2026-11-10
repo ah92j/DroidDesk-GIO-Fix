@@ -867,7 +867,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v10")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v11")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -907,7 +907,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v10").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v11").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -2820,6 +2820,7 @@ class LinuxRuntime(private val context: Context) {
         timeoutMinutes: Long = 30,
         onProgress: (Double, String) -> Unit,
     ): KaliProotResult = kaliAptTransactionLock.withLock {
+        var reportedProgress = 0.0
         val result = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/root",
@@ -2827,9 +2828,24 @@ class LinuxRuntime(private val context: Context) {
             timeoutMinutes = timeoutMinutes,
             onOutput = { line ->
                 installLogSink?.invoke(line)
-                if (line.isNotBlank()) {
+                val message = line.trim()
+                if (message.isNotEmpty()) {
                     Log.i(TAG, "Kali App Store: ${line.trimEnd()}")
-                    onProgress(0.55, line.trim().take(180))
+                    val databasePercent = Regex("Reading database.*?([0-9]{1,3})%")
+                        .find(message)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                    val stageProgress = when {
+                        databasePercent != null ->
+                            0.28 + (databasePercent.coerceIn(0.0, 100.0) / 100.0) * 0.34
+                        message.startsWith("Preparing to unpack ") -> 0.68
+                        message.startsWith("Unpacking ") -> 0.76
+                        message.startsWith("Setting up ") -> 0.87
+                        message.startsWith("Processing triggers for ") -> 0.95
+                        message.contains("Verified ") && message.contains("installed for ARM64") -> 0.98
+                        else -> 0.0
+                    }
+                    if (stageProgress > reportedProgress) reportedProgress = stageProgress
+                    // Unknown APT output is indeterminate; never show a fabricated 55% freeze.
+                    onProgress(reportedProgress, message.take(180))
                 }
             },
             onProcessStarted = { process -> activeCommandProcess = process },
@@ -3050,12 +3066,75 @@ class LinuxRuntime(private val context: Context) {
               package_spec="${'$'}package_name"
             fi
             echo "Installing ${'$'}package_spec from Kali ARM64 repositories."
-            apt_options=(-o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-            if ! DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --install-recommends $aptAction -y "${'$'}package_spec"; then
-              echo "[DroidDesk App Store] First install attempt failed; repairing dpkg and dependencies."
-              dpkg --configure -a || true
-              DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --fix-broken install -y --install-recommends
-              DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --install-recommends $aptAction -y "${'$'}package_spec"
+            apt_options=(
+              -o Acquire::ForceIPv4=true
+              -o Acquire::Retries=3
+              -o Acquire::http::Timeout=25
+              -o Acquire::https::Timeout=45
+              -o Acquire::https::Verify-Peer=true
+              -o Acquire::https::Verify-Host=true
+              -o APT::Keep-Downloaded-Packages=true
+              -o Dpkg::Use-Pty=0
+              -o Dpkg::Options::=--force-confdef
+              -o Dpkg::Options::=--force-confold
+            )
+
+            # PRoot has no system init; do not let package scripts wait for services.
+            if [ ! -e /usr/sbin/policy-rc.d ]; then
+              cat > /usr/sbin/policy-rc.d <<'POLICY'
+#!/bin/sh
+exit 101
+POLICY
+              chmod 0755 /usr/sbin/policy-rc.d
+            fi
+
+            run_package_heartbeat() {
+              local label="$1"
+              shift
+              "$@" &
+              local command_pid=$!
+              (
+                while kill -0 "$command_pid" 2>/dev/null; do
+                  sleep 15
+                  if kill -0 "$command_pid" 2>/dev/null; then
+                    latest_event="$(tail -n 1 /var/log/dpkg.log 2>/dev/null || true)"
+                    echo "[DroidDesk App Store] Still working: $label. Last dpkg activity: ${'$'}{latest_event:-No dpkg event recorded yet}"
+                  fi
+                done
+              ) &
+              local heartbeat_pid=$!
+              local command_status=0
+              if wait "$command_pid"; then command_status=0; else command_status=$?; fi
+              kill "$heartbeat_pid" 2>/dev/null || true
+              wait "$heartbeat_pid" 2>/dev/null || true
+              return "$command_status"
+            }
+
+            echo "[DroidDesk App Store] Checking the existing dpkg state before starting another install."
+            if ! run_package_heartbeat "finishing interrupted package configuration" dpkg --configure -a; then
+              echo "[DroidDesk App Store] dpkg configuration failed; repairing package dependencies."
+              run_package_heartbeat "repairing broken dependencies" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --fix-broken install -y --no-install-recommends
+              run_package_heartbeat "completing repaired package configuration" dpkg --configure -a
+            fi
+            if dpkg --audit | grep -q .; then
+              echo "[DroidDesk App Store] dpkg still reports incomplete packages; repairing them before the selected app."
+              run_package_heartbeat "repairing incomplete package state" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --fix-broken install -y --no-install-recommends
+              run_package_heartbeat "finishing repaired package configuration" dpkg --configure -a
+            fi
+            if dpkg --audit | grep -q .; then
+              echo "[DroidDesk App Store] Package database remains incomplete. See the last dpkg.log event."
+              exit 33
+            fi
+
+            if ! run_package_heartbeat "installing $package_name without optional recommendations" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends $aptAction -y "${'$'}package_spec"; then
+              echo "[DroidDesk App Store] First install attempt failed; repairing dependencies and retrying once."
+              run_package_heartbeat "resuming dpkg configuration" dpkg --configure -a || true
+              run_package_heartbeat "repairing broken dependencies" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --fix-broken install -y --no-install-recommends
+              run_package_heartbeat "retrying $package_name installation" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends $aptAction -y "${'$'}package_spec"
+            fi
+            if dpkg --audit | grep -q .; then
+              echo "[DroidDesk App Store] Installation left incomplete package configuration."
+              exit 34
             fi
             dpkg-query -W -f='${'$'}{Status}' "${'$'}package_name" | grep -qx 'install ok installed'
             update-desktop-database /usr/share/applications 2>/dev/null || true
