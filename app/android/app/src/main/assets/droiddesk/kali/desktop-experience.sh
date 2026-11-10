@@ -13,7 +13,7 @@ readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
 REQUIRED_PACKAGES=(
   kali-wallpapers-all firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
-  ffmpeg libavcodec-extra62 libavcodec-extra63 gstreamer1.0-libav gstreamer1.0-plugins-good
+  ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg file
 )
 
@@ -23,8 +23,9 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
   [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v8" ]]
-  grep -q "libavcodec-extra62" "$0"
-  grep -q "libavcodec-extra63" "$0"
+  grep -q "libavcodec-extra\\$abi" "$0"
+  grep -q "media.rdd-ffmpeg.enabled" "$0"
+  grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
   grep -q "Preserve existing XFCE preferences" "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
   exit 0
@@ -62,6 +63,26 @@ apt-get --install-recommends -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::O
 if ! package_installed firefox-esr; then
   echo "[Kali Linux] Firefox ESR is not configured after its upgrade."
   exit 22
+fi
+
+# Firefox's FFmpeg backend must find the matching ARM64 codec ABI. Kali Rolling
+# currently publishes ABI 62 and 63; detect the available package instead of
+# assuming one fixed FFmpeg generation or downloading an x86_64 codec library.
+codec_packages=()
+for abi in 62 63; do
+  codec_package="libavcodec-extra$abi"
+  if apt-cache show "$codec_package" 2>/dev/null |
+     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted) found=1 } END { exit !found }'; then
+    codec_packages+=("$codec_package")
+  fi
+done
+if (("${#codec_packages[@]}" > 0)); then
+  echo "[Kali Linux] Installing matching ARM64 FFmpeg codec ABI packages: ${codec_packages[*]}"
+  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+    install -y --no-install-recommends "${codec_packages[@]}"
+else
+  echo "[Kali Linux] No optional FFmpeg ABI package candidate was found; recording the system decoder state."
 fi
 
 # Install Google Chrome ARM64 from Google's signed repository first.
@@ -167,6 +188,7 @@ export PULSE_SINK=droiddesk_android
 export PULSE_LATENCY_MSEC=80
 export MOZ_DISABLE_CONTENT_SANDBOX=1
 export MOZ_DISABLE_RDD_SANDBOX=1
+export MOZ_DISABLE_GMP_SANDBOX=1
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
 firefox_bin="$(command -v firefox-esr || command -v firefox || true)"
@@ -205,6 +227,7 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
 pref("media.cubeb.sandbox", false);
 pref("media.cubeb.backend", "pulse");
 pref("media.ffmpeg.enabled", true);
+pref("media.rdd-ffmpeg.enabled", true);
 pref("media.ffvpx.enabled", true);
 pref("media.av1.enabled", false);
 pref("media.ffmpeg.vaapi.enabled", false);
@@ -236,6 +259,7 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
 user_pref("media.cubeb.sandbox", false);
 user_pref("media.cubeb.backend", "pulse");
 user_pref("media.ffmpeg.enabled", true);
+user_pref("media.rdd-ffmpeg.enabled", true);
 user_pref("media.ffvpx.enabled", true);
 user_pref("media.av1.enabled", false);
 user_pref("media.ffmpeg.vaapi.enabled", false);
@@ -264,6 +288,8 @@ diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
   dpkg-query -W firefox-esr ffmpeg 2>/dev/null || true
   echo "=== Firefox and codec package candidates ==="
   apt-cache policy firefox-esr libavcodec-extra62 libavcodec-extra63 2>/dev/null || true
+  echo "=== Installed FFmpeg codec ABI alternatives ==="
+  dpkg-query -W -f="${Status} ${Architecture}\\n" "libavcodec-extra*" 2>/dev/null || true
   echo "=== FFmpeg libraries ==="
   dpkg-query -W 'libavcodec*' 2>/dev/null || true
   ldconfig -p 2>/dev/null | grep 'libavcodec.so' || true
@@ -312,7 +338,6 @@ if [[ -z "$default_wallpaper" || ! -f "$default_wallpaper" ]]; then
   exit 21
 fi
 
-desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
 # Preserve existing XFCE preferences. Only add gallery/default keys when absent;
 # never replace a user's selected wallpaper, panel style, compositing choice or icon layout.
 desktop_xml="/home/kali/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
@@ -388,10 +413,34 @@ case "$lower_file" in
       exit 2
     fi
     if [[ "$deb_arch" != "all" && "$deb_arch" != "$host_arch" ]]; then
-      show_failure "Wrong package architecture.
-Package: $deb_arch
-Kali system: $host_arch
-Download the ARM64 build of this application."
+      echo "[DroidDesk Installer] The selected DEB is $deb_arch; Kali is $host_arch."
+      echo "[DroidDesk Installer] Looking for the same application in Kali's ARM64 repositories."
+      if sudo -n apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 update; then
+        candidate_arch="$(apt-cache show "$deb_name" 2>/dev/null |
+          awk '/^Architecture:/ {
+            if ($2 == "arm64") native=1
+            else if ($2 == "all") common=1
+          } END {
+            if (native) print "arm64"
+            else if (common) print "all"
+          }')"
+        if [[ "$candidate_arch" == "arm64" || "$candidate_arch" == "all" ]]; then
+          package_spec="$deb_name"
+          if [[ "$candidate_arch" == "arm64" ]]; then package_spec="$deb_name:arm64"; fi
+          echo "[DroidDesk Installer] Installing compatible repository package $package_spec."
+          if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$package_spec"; then
+            package_status="$(dpkg-query -W -f='${Status}' "$deb_name" 2>/dev/null || true)"
+            if [[ "$package_status" == "install ok installed" ]]; then
+              sudo -n update-desktop-database /usr/share/applications 2>/dev/null || true
+              zenity --info --title='Kali Linux' --text="Installed the ARM64 repository build of $deb_name." 2>/dev/null || true
+              exit 0
+            fi
+          fi
+        fi
+      fi
+      show_failure "This download is $deb_arch, but Kali requires $host_arch.
+I checked the configured Kali repositories for an ARM64 replacement of $deb_name.
+No compatible package could be installed automatically. The original x86_64 file was not installed."
       exit 3
     fi
 
