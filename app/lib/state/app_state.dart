@@ -212,7 +212,9 @@ class AppState extends ChangeNotifier {
 
     final prefs = await prefsFuture;
     _autoStartDesktop = prefs.getBool('autoStartDesktop') ?? false;
-    checkForUpdate();
+    // Always check GitHub on a fresh app launch so an older install is notified immediately.
+    // Background resumes continue to use the normal six-hour throttle.
+    checkForUpdate(force: true);
 
     if (_autoStartDesktop && isSetupComplete && !_isRunning) {
       // Flutter is the sole auto-start owner; MainActivity never launches a
@@ -607,7 +609,7 @@ class AppState extends ChangeNotifier {
 
   /// Looks for a newer GitHub release. Automatic checks are throttled and silent;
   /// [manual] checks always run and surface errors in [updateError].
-  Future<void> checkForUpdate({bool manual = false}) async {
+  Future<void> checkForUpdate({bool manual = false, bool force = false}) async {
     if (_checkingUpdate || _downloadingUpdate) return;
     _checkingUpdate = true;
     if (manual) {
@@ -618,7 +620,11 @@ class AppState extends ChangeNotifier {
     try {
       final installed = await _installedVersion();
       if (installed.isEmpty) return;
-      final release = await UpdateService.check(installedVersion: installed, manual: manual);
+      final release = await UpdateService.check(
+        installedVersion: installed,
+        manual: manual,
+        force: force,
+      );
       if (release != null || manual) {
         if (_availableUpdate?.tag != release?.tag) _downloadedUpdatePath = null;
         _availableUpdate = release;
