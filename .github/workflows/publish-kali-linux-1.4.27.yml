@@ -1,0 +1,104 @@
+name: Publish Kali Linux 1.4.27 APK and GitHub Release
+
+on:
+  workflow_run:
+    workflows:
+      - DroidDesk Permanent Release Build
+    types:
+      - completed
+    branches:
+      - security/hardening-phase-1
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '205bd9656d593e62cb97d6023f624aa308a32245' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify the signed ARM64 APK artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DIR="$RUNNER_TEMP/kali-linux-apk"
+          mkdir -p "$DOWNLOAD_DIR"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo ah92j/DroidDesk-GIO-Fix \
+            --name Kali-Linux-1.4.27-arm64 \
+            --dir "$DOWNLOAD_DIR"
+
+          APK="$(find "$DOWNLOAD_DIR" -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          test -s "$APK"
+          APK_SIZE="$(stat -c '%s' "$APK")"
+          if [ "$APK_SIZE" -lt 30000000 ] || [ "$APK_SIZE" -gt 120000000 ]; then
+            echo "Unexpected APK size: $APK_SIZE"
+            exit 1
+          fi
+          cp "$APK" Kali-Linux-1.4.27-arm64.apk
+          echo "APK SHA-256:"
+          sha256sum Kali-Linux-1.4.27-arm64.apk
+
+      - name: Publish stable direct APK URL while retaining previous releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FILE_NAME="Kali-Linux-1.4.27-arm64.apk"
+          PUBLISH_DIR="$RUNNER_TEMP/apk-downloads"
+          git clone --depth=1 --single-branch --branch apk-downloads \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH_DIR"
+          cp "$FILE_NAME" "$PUBLISH_DIR/$FILE_NAME"
+          git -C "$PUBLISH_DIR" config user.name "github-actions[bot]"
+          git -C "$PUBLISH_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$PUBLISH_DIR" add "$FILE_NAME"
+          git -C "$PUBLISH_DIR" commit -m "Publish Kali Linux 1.4.27 ARM64 APK"
+          git -C "$PUBLISH_DIR" push origin HEAD:apk-downloads
+          echo "Stable APK URL:"
+          echo "https://raw.githubusercontent.com/ah92j/DroidDesk-GIO-Fix/apk-downloads/$FILE_NAME"
+
+      - name: Publish APK as the latest GitHub Release for in-app updates
+        # The APK is downloaded from the successful source run above. Target main for the
+        # release tag because GITHUB_TOKEN cannot create refs at non-default commits that
+        # modify workflow files.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v1.4.27+44"
+          FILE_NAME="Kali-Linux-1.4.27-arm64.apk"
+          TITLE="Kali Linux 1.4.27"
+          NOTES="$(cat <<'RELEASE_NOTES'
+          DroidDesk 1.4.27+44 for Android ARM64.
+
+          - Restores Firefox's separate RDD media process and enables its system FFmpeg decoder path for H.264/AAC, while keeping VP9/Opus software decoding available.
+          - Selects the FFmpeg codec package recommended by the installed Firefox ESR build instead of relying on fixed ABI numbers.
+          - Records Firefox codec, shared-library and PulseAudio sink diagnostics; the Firefox launcher also selects and unmutes DroidDesk's Android audio sink.
+          - Refreshes Kali ARM64 package indexes before App Store browsing and installs, and caches successful index updates for six hours.
+          - Serializes App Store APT transactions against the post-launch desktop migration to prevent package database conflicts.
+          - Uses dependency recommendations and repairs interrupted dpkg state before retrying an app installation.
+          - Writes App Store activity and APT errors to /home/kali/.local/share/droiddesk/package-store-install.log.
+          - Explains AMD64 versus ARM64 package incompatibility and records related Kali repository matches.
+
+          Existing Kali rootfs data, installed applications and XFCE preferences are preserved.
+          RELEASE_NOTES
+          )"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES" --latest
+          else
+            gh release create "$TAG" "$FILE_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target main \
+              --title "$TITLE" \
+              --notes "$NOTES" \
+              --latest
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,assets
