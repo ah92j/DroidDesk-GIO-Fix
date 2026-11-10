@@ -2915,7 +2915,7 @@ class LinuxRuntime(private val context: Context) {
         packageName in setOf(
             "apt", "bash", "base-files", "base-passwd", "coreutils", "dpkg",
             "kali-linux-default", "kali-desktop-core", "libc6", "login",
-            "sudo", "systemd", "xfce4", "xfce4-panel", "xfce4-session",
+            "python3", "python3-minimal", "sudo", "systemd",
             "xfdesktop4", "xfwm4",
         )
 
@@ -2929,11 +2929,12 @@ class LinuxRuntime(private val context: Context) {
             onProgress(-1.0, "Invalid package or Kali desktop is not ready")
             return false
         }
-        if (kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }) {
-            onProgress(1.0, "$selected is already installed")
-            return true
-        }
-        onProgress(0.12, "Checking Kali ARM64 package availability...")
+        val alreadyInstalled = kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        onProgress(
+            0.12,
+            if (alreadyInstalled) "Checking update for $selected..." else "Checking Kali ARM64 package availability...",
+        )
+        val aptAction = if (alreadyInstalled) "install --only-upgrade" else "install"
         val script = """
             set -Eeuo pipefail
             native_arch="${'$'}(/usr/bin/dpkg --print-architecture)"
@@ -2944,8 +2945,8 @@ class LinuxRuntime(private val context: Context) {
             package_name="$selected"
             candidate_arch="$(apt-cache show "${'$'}package_name" 2>/dev/null |
               awk '/^Architecture:/ {
-                if ($2 == "arm64") native=1
-                else if ($2 == "all") common=1
+                if (${'$'}2 == "arm64") native=1
+                else if (${'$'}2 == "all") common=1
               } END {
                 if (native) print "arm64"
                 else if (common) print "all"
@@ -2961,7 +2962,7 @@ class LinuxRuntime(private val context: Context) {
               package_spec="${'$'}package_name"
             fi
             echo "Installing ${'$'}package_spec from Kali repositories."
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${'$'}package_spec"
+            DEBIAN_FRONTEND=noninteractive apt-get $aptAction -y --no-install-recommends "${'$'}package_spec"
             dpkg-query -W -f='${'$'}{Status}' "${'$'}package_name" | grep -qx 'install ok installed'
             update-desktop-database /usr/share/applications 2>/dev/null || true
             update-mime-database /usr/share/mime 2>/dev/null || true
