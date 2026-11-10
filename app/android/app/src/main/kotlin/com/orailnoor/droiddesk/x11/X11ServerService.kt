@@ -86,7 +86,9 @@ class X11ServerService : Service() {
                     startSucceeded = try {
                         configureEnvironment()
                         Log.i(TAG, "Starting native X server in pid=${android.os.Process.myPid()}")
-                        CmdEntryPoint.start(arrayOf(":0", "-nolock"))
+                        // The legacy renderer is the compatibility path recommended by
+                        // Termux:X11 for devices that intermittently show a black surface.
+                        CmdEntryPoint.start(arrayOf(":0", "-nolock", "-legacy-drawing"))
                     } catch (error: Throwable) {
                         Log.e(TAG, "Native X server failed to start", error)
                         false

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// A GitHub release newer than the installed app.
@@ -30,7 +32,7 @@ class UpdateService {
   // Test builds can point at a local mock: --dart-define=DROIDDESK_UPDATE_URL=http://...
   static const _latestUrl = String.fromEnvironment(
     'DROIDDESK_UPDATE_URL',
-    defaultValue: 'https://api.github.com/repos/$repo/releases/latest',
+    defaultValue: 'https://api.github.com/repos/$repo/releases?per_page=20',
   );
   static const _lastCheckKey = 'update_last_check';
   static const _skippedTagKey = 'update_skipped_tag';
@@ -52,35 +54,60 @@ class UpdateService {
       if (elapsed < checkInterval.inMilliseconds) return null;
     }
 
-    final Map<String, dynamic> json;
+    final List<Map<String, dynamic>> releases;
     try {
-      json = await _fetchLatest();
+      releases = await _fetchReleases();
     } catch (error) {
       if (manual) rethrow;
       return null;
     }
     await prefs.setInt(_lastCheckKey, DateTime.now().millisecondsSinceEpoch);
 
-    final tag = json['tag_name']?.toString() ?? '';
-    if (tag.isEmpty || json['draft'] == true || json['prerelease'] == true) return null;
-    if (!isNewer(tag, installedVersion)) return null;
-    if (!manual && prefs.getString(_skippedTagKey) == tag) return null;
-
-    final assets = (json['assets'] as List? ?? const []).cast<Map>();
-    final apk = assets.where(
-      (asset) => asset['name'].toString().toLowerCase().endsWith('.apk'),
+    return selectNewerRelease(
+      releases,
+      installedVersion: installedVersion,
+      skippedTag: manual ? null : prefs.getString(_skippedTagKey),
     );
-    if (apk.isEmpty) return null;
+  }
 
-    return AppRelease(
-      tag: tag,
-      version: _clean(tag),
-      title: json['name']?.toString() ?? tag,
-      notes: (json['body']?.toString() ?? '').trim(),
-      pageUrl: json['html_url']?.toString() ?? 'https://github.com/$repo/releases',
-      apkUrl: apk.first['browser_download_url'].toString(),
-      apkSize: (apk.first['size'] as num?)?.toInt() ?? 0,
-    );
+  /// Selects the highest compatible release from GitHub's releases collection.
+  /// Signed device-test prereleases are eligible for the in-app update flow.
+  @visibleForTesting
+  static AppRelease? selectNewerRelease(
+    List<Map<String, dynamic>> releases, {
+    required String installedVersion,
+    String? skippedTag,
+  }) {
+    AppRelease? newest;
+    for (final json in releases) {
+      final tag = json['tag_name']?.toString() ?? '';
+      if (tag.isEmpty || json['draft'] == true) continue;
+      if (!isNewer(tag, installedVersion) || skippedTag == tag) continue;
+
+      final assets = (json['assets'] as List? ?? const [])
+          .whereType<Map>()
+          .map((asset) => Map<String, dynamic>.from(asset))
+          .where((asset) =>
+              (asset['name']?.toString() ?? '').toLowerCase().endsWith('.apk') &&
+              (asset['browser_download_url']?.toString() ?? '').startsWith('https://'))
+          .toList();
+      final arm64Assets = assets.where((asset) =>
+          (asset['name']?.toString() ?? '').toLowerCase().contains('arm64'));
+      // This app targets ARM64. Never offer an APK of an unknown or incompatible ABI.
+      if (arm64Assets.isEmpty) continue;
+      final apk = arm64Assets.first;
+      final candidate = AppRelease(
+        tag: tag,
+        version: _clean(tag),
+        title: json['name']?.toString() ?? tag,
+        notes: (json['body']?.toString() ?? '').trim(),
+        pageUrl: json['html_url']?.toString() ?? 'https://github.com/$repo/releases',
+        apkUrl: apk['browser_download_url'].toString(),
+        apkSize: (apk['size'] as num?)?.toInt() ?? 0,
+      );
+      if (newest == null || isNewer(candidate.tag, newest.tag)) newest = candidate;
+    }
+    return newest;
   }
 
   static Future<void> skip(String tag) async {
@@ -88,7 +115,7 @@ class UpdateService {
     await prefs.setString(_skippedTagKey, tag);
   }
 
-  static Future<Map<String, dynamic>> _fetchLatest() async {
+  static Future<List<Map<String, dynamic>>> _fetchReleases() async {
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
     try {
       final request = await client.getUrl(Uri.parse(_latestUrl));
@@ -100,7 +127,14 @@ class UpdateService {
       if (response.statusCode != 200) {
         throw HttpException('GitHub returned ${response.statusCode}');
       }
-      return jsonDecode(body) as Map<String, dynamic>;
+      final decoded = jsonDecode(body);
+      if (decoded is! List) {
+        throw const FormatException('GitHub releases response is not a list');
+      }
+      return decoded
+          .whereType<Map>()
+          .map((release) => Map<String, dynamic>.from(release))
+          .toList();
     } finally {
       client.close();
     }
@@ -112,14 +146,24 @@ class UpdateService {
 
   /// True when [candidate] is a higher semantic version than [current].
   static bool isNewer(String candidate, String current) {
-    List<int> parts(String v) =>
-        _clean(v).split('.').map((p) => int.tryParse(p) ?? 0).toList();
+    List<int> parts(String value) {
+      final normalized = value.trim().replaceFirst(RegExp(r'^[vV]'), '');
+      final core = _clean(normalized)
+          .split('.')
+          .map((part) => int.tryParse(part) ?? 0)
+          .toList();
+      while (core.length < 3) {
+        core.add(0);
+      }
+      final build = RegExp(r'\+(\d+)').firstMatch(normalized);
+      core.add(int.tryParse(build?.group(1) ?? '') ?? 0);
+      return core;
+    }
+
     final a = parts(candidate);
     final b = parts(current);
-    for (var i = 0; i < 3; i++) {
-      final x = i < a.length ? a[i] : 0;
-      final y = i < b.length ? b[i] : 0;
-      if (x != y) return x > y;
+    for (var i = 0; i < 4; i++) {
+      if (a[i] != b[i]) return a[i] > b[i];
     }
     return false;
   }

@@ -48,6 +48,16 @@ import java.io.FileReader
 class DesktopActivity : Activity() {
     private var lorieView: LorieView? = null
     private var connectionRequested = false
+    private var activityResumed = false
+    private var x11ReconnectAttempts = 0
+    private val x11ReconnectHandler = Handler(Looper.getMainLooper())
+    private val x11ReconnectRunnable = Runnable {
+        if (activityResumed && !isFinishing && !isDestroyed &&
+            lorieView?.holder?.surface?.isValid == true
+        ) {
+            connectToX11ServiceIfNeeded()
+        }
+    }
     private var isSetupDone = false
     private var shouldStartSession = false
     private var sessionMode = "termux"
@@ -73,7 +83,6 @@ class DesktopActivity : Activity() {
     private var loadingStatus: TextView? = null
     private var loadingEstimate: TextView? = null
     private var desktopRevealed = false
-    @Volatile private var kaliHealthCheckInProgress = false
     private val loadingMessageHandler = Handler(Looper.getMainLooper())
     private var loadingMessageIndex = 0
     private var loadingStartedAt = 0L
@@ -171,6 +180,9 @@ class DesktopActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        activityResumed = true
+        x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
+        x11ReconnectAttempts = 0
         enableImmersiveMode()
         if (isSetupDone && lorieView?.holder?.surface?.isValid == true) {
             Log.i(TAG, "DesktopActivity resumed with a valid X11 surface; reconnecting input client")
@@ -189,25 +201,14 @@ class DesktopActivity : Activity() {
     private fun restartSessionIfStopped() {
         if (!desktopRevealed || isFinishing || isDestroyed) return
 
-        if (sessionMode == "proot-kali") {
-            if (kaliHealthCheckInProgress) return
-            kaliHealthCheckInProgress = true
-            Thread({
-                val healthy = runCatching {
-                    linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))
-                }.getOrDefault(false)
-                runOnUiThread {
-                    kaliHealthCheckInProgress = false
-                    if (!healthy && desktopRevealed && !isFinishing && !isDestroyed) {
-                        Log.w(TAG, "Kali XFCE health check failed after returning to the desktop; restarting the session")
-                        restartDesktopSession()
-                    }
-                }
-            }, "KaliDesktopHealthCheck").apply { isDaemon = true; start() }
+        // Do not run the destructive visual-readiness recovery path merely because
+        // Android covered DesktopActivity. A healthy PRoot session can briefly fail
+        // X11 window-tree probes while its SurfaceView is being detached/reattached.
+        // The session owner process is the reliable indicator that XFCE is still alive.
+        if (isSessionRunning()) {
+            Log.i(TAG, "Existing Linux desktop process is alive; reconnect the X11 view without restarting XFCE")
             return
         }
-
-        if (isSessionRunning()) return
         restartDesktopSession()
     }
 
@@ -245,6 +246,8 @@ class DesktopActivity : Activity() {
     }
 
     override fun onPause() {
+        activityResumed = false
+        x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
         clipboardSync?.stop()
         // MainActivity can cover the desktop temporarily. Drop only the UI-side
         // Binder/client connection; keep the X server and Linux session alive.
@@ -338,6 +341,12 @@ class DesktopActivity : Activity() {
     private fun releaseX11ConnectionForBackground() {
         synchronized(this) {
             connectionRequested = false
+            // Clear gesture listeners as well as the Binder FD. Recreate them only
+            // after the next live X11 connection, otherwise a resumed LorieView can
+            // retain an input controller attached to the old Surface generation.
+            inputController?.dispose()
+            inputController = null
+            extraKeysBar?.releaseAll()
             x11ServiceClient?.disconnect()
             x11ServiceClient = null
             X11ServiceClient.connectedServerPid = -1
@@ -360,6 +369,8 @@ class DesktopActivity : Activity() {
                         Log.i(TAG, "LorieView reused live X11 service pid=$serverPid")
                     }
 
+                    x11ReconnectAttempts = 0
+                    x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
                     attachDesktopInput()
                 } catch (error: Throwable) {
                     connectionFd.close()
@@ -374,6 +385,13 @@ class DesktopActivity : Activity() {
                     x11ServiceClient = null
                 }
                 showX11Error(message, error)
+                if (activityResumed && x11ReconnectAttempts < 4) {
+                    val delay = (750L shl x11ReconnectAttempts.coerceAtMost(3)).coerceAtMost(6_000L)
+                    x11ReconnectAttempts++
+                    Log.w(TAG, "Scheduling X11 reconnect attempt $x11ReconnectAttempts in ${delay}ms")
+                    x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
+                    x11ReconnectHandler.postDelayed(x11ReconnectRunnable, delay)
+                }
             },
         ).also { it.connect() }
     }
@@ -742,6 +760,15 @@ class DesktopActivity : Activity() {
     }
 
     private fun waitForDesktopAndReveal() {
+        if (desktopRevealed && isSessionRunning()) {
+            // This is a return to an already visible session, not a cold launch.
+            // The only operation needed is to restore focus after rebinding LorieView.
+            collapsedControl?.visibility = View.VISIBLE
+            collapsedControl?.bringToFront()
+            lorieView?.requestFocus()
+            Log.i(TAG, "Returned to the existing desktop; skipped XFCE restart/readiness teardown")
+            return
+        }
         Thread({
             val ready = when (sessionMode) {
                 "chroot" -> chrootRuntime.waitForDesktopReady(desktopEnv)
@@ -956,6 +983,8 @@ class DesktopActivity : Activity() {
     }
 
     override fun onDestroy() {
+        activityResumed = false
+        x11ReconnectHandler.removeCallbacksAndMessages(null)
         collapsedFadeHandler.removeCallbacks(fadeCollapsedControl)
         clipboardSync?.stop()
         clipboardSync = null

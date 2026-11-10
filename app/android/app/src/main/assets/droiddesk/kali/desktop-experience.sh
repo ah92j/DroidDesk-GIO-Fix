@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v15"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v16"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -22,9 +22,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-2026' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v15" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v16" ]]
   grep -q 'codec_recommendations' "$0"
+  grep -q 'Firefox codec backend may require a different FFmpeg ABI' "$0"
   grep -q 'Route stock package-provided launchers through the same audio/codec wrapper' "$0"
+  grep -q 'Synchronize desktop shortcuts for previously installed Kali store packages' "$0"
+  grep -q 'Install the XFCE Applications menu on the bottom panel' "$0"
+  grep -q 'applicationsmenu' "$0"
+  grep -q 'show-menu-icons' "$0"
   grep -q 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' "$0"
   grep -q 'archive.kali.org/kali/' "$0"
   grep -Fq 'libavcodec-extra$codec_abi' "$0"
@@ -193,9 +198,30 @@ fi
 # Select the codec package that matches the FFmpeg ABI installed on this Kali ARM64 rootfs.
 # Firefox ESR needs the matching extra codec build for H.264/AAC; never choose an older ABI
 # merely because apt-cache prints old Recommends alternatives alphabetically.
-codec_abi="$(ldconfig -p 2>/dev/null |
-  sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
-  sort -rn | head -n1)"
+# Firefox's RDD backend may require a different FFmpeg ABI from the system CLI.
+# Read the SONAME Firefox actually links against first; only fall back to the installed
+# FFmpeg ABI when this Firefox build does not expose a dynamic libavcodec dependency.
+firefox_codec_backend="$(find /usr/lib/firefox-esr /usr/lib/firefox -maxdepth 2 \\
+  -name 'libmozavcodec.so' -type f -print -quit 2>/dev/null || true)"
+codec_abi=""
+if [[ -n "$firefox_codec_backend" && -f "$firefox_codec_backend" ]]; then
+  codec_abi="$(
+    LD_LIBRARY_PATH="/usr/lib/firefox-esr:${LD_LIBRARY_PATH:-}" ldd "$firefox_codec_backend" 2>/dev/null |
+      sed -nE 's/.*libavcodec\.so\.([0-9]+)([[:space:]].*)?$/\1/p' |
+      head -n1
+  )"
+  if [[ -z "$codec_abi" ]] && command -v readelf >/dev/null 2>&1; then
+    codec_abi="$(readelf -d "$firefox_codec_backend" 2>/dev/null |
+      sed -nE 's/.*Shared library: \[libavcodec\.so\.([0-9]+)\].*/\1/p' |
+      head -n1)"
+  fi
+fi
+if [[ -z "$codec_abi" ]]; then
+  codec_abi="$(ldconfig -p 2>/dev/null |
+    sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
+    sort -rn | head -n1)"
+fi
+echo "[Kali Linux] Firefox codec backend: ${firefox_codec_backend:-not found}; required FFmpeg ABI: ${codec_abi:-unknown}"
 codec_candidate=""
 
 package_supports_kali_arm64() {
@@ -848,6 +874,130 @@ ctl.!default {
   type pulse
 }
 ALSA
+fi
+
+# Synchronize desktop shortcuts for applications installed before the App Store
+# learned to create launchers. This is intentionally limited to packages visible
+# in DroidDesk's Kali catalog; it does not create icons for every dependency.
+echo "[DroidDesk App Store] Synchronizing desktop shortcuts for previously installed packages..."
+STORE_PACKAGES=(
+  firefox-esr chromium code-oss libreoffice gimp blender vlc mpv thunderbird
+  filezilla geany inkscape audacity evince htop btop fastfetch git python3
+  python3-pip nodejs imagemagick tmux zsh fish p7zip-full file-roller kali-tweaks
+)
+STORE_TRACKED="/home/kali/.local/share/droiddesk/app-store-packages"
+DESKTOP_DIR="/home/kali/Desktop"
+install -d -m 0755 "$(dirname "$STORE_TRACKED")" "$DESKTOP_DIR"
+touch "$STORE_TRACKED"
+for package in "${STORE_PACKAGES[@]}"; do
+  if ! package_installed "$package"; then continue; fi
+  if ! grep -Fqx "$package" "$STORE_TRACKED"; then
+    printf '%s\\n' "$package" >> "$STORE_TRACKED"
+  fi
+
+  # Firefox already has a dedicated DroidDesk audio/codec wrapper and launcher.
+  [[ "$package" == "firefox-esr" ]] && continue
+  while IFS= read -r desktop_file; do
+    [[ -f "$desktop_file" ]] || continue
+    if grep -Eiq '^(NoDisplay|Hidden)=true' "$desktop_file"; then continue; fi
+    desktop_name="$(basename "$desktop_file")"
+    managed_shortcut="$DESKTOP_DIR/store-$package-$desktop_name"
+    [[ -e "$managed_shortcut" ]] && continue
+    temporary_shortcut="$managed_shortcut.tmp"
+    {
+      printf '# DroidDesk App Store package: %s\\n' "$package"
+      cat "$desktop_file"
+    } > "$temporary_shortcut"
+    chmod 0755 "$temporary_shortcut"
+    chown kali:kali "$temporary_shortcut"
+    mv -f "$temporary_shortcut" "$managed_shortcut"
+    echo "[DroidDesk App Store] Restored desktop launcher for $package: $managed_shortcut"
+  done < <(
+    dpkg-query -L "$package" 2>/dev/null |
+      grep -E '^/(usr/share|usr/local/share)/applications/[^/]+\\.desktop$' || true
+  )
+done
+chown kali:kali "$STORE_TRACKED" 2>/dev/null || true
+if [[ -s /home/kali/.local/share/droiddesk/dbus-session-address ]] && pgrep -x xfdesktop >/dev/null 2>&1; then
+  session_address="$(cat /home/kali/.local/share/droiddesk/dbus-session-address)"
+  sudo -E -u kali env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-kali \\
+    DBUS_SESSION_BUS_ADDRESS="$session_address" xfdesktop --reload >/dev/null 2>&1 || true
+fi
+
+# Install the XFCE Applications menu on the bottom panel.
+# It reads system .desktop entries, so apps appear even without a desktop shortcut.
+# The applicationsmenu plugin is built into the XFCE panel used by this profile.
+PANEL_MENU_CONFIGURED=0
+SESSION_ADDRESS_FILE="/home/kali/.local/share/droiddesk/dbus-session-address"
+if [[ -s "$SESSION_ADDRESS_FILE" ]] && command -v xfconf-query >/dev/null 2>&1; then
+  SESSION_ADDRESS="$(cat "$SESSION_ADDRESS_FILE")"
+  if sudo -E -u kali env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-kali \
+      DBUS_SESSION_BUS_ADDRESS="$SESSION_ADDRESS" /bin/bash -s <<'PANEL_MENU'
+set -Eeuo pipefail
+channel="xfce4-panel"
+panel_path="/panels/panel-2/plugin-ids"
+mapfile -t current_ids < <(
+  xfconf-query -c "$channel" -p "$panel_path" 2>/dev/null |
+    sed -nE 's/^[[:space:]]*([0-9]+)[[:space:]]*$/\1/p'
+)
+if [[ ${#current_ids[@]} -eq 0 ]]; then
+  echo "[DroidDesk Panel] Bottom panel 2 has no plugin list; refusing to replace the user's panel."
+  exit 2
+fi
+
+menu_id=""
+for current_id in "${current_ids[@]}"; do
+  plugin_type="$(xfconf-query -c "$channel" -p "/plugins/plugin-$current_id" 2>/dev/null || true)"
+  if [[ "$plugin_type" == *applicationsmenu* ]]; then
+    menu_id="$current_id"
+    break
+  fi
+done
+
+if [[ -z "$menu_id" ]]; then
+  for candidate in $(seq 25 250); do
+    if ! xfconf-query -c "$channel" -p "/plugins/plugin-$candidate" >/dev/null 2>&1; then
+      menu_id="$candidate"
+      break
+    fi
+  done
+  [[ -n "$menu_id" ]] || {
+    echo "[DroidDesk Panel] No free XFCE panel plugin ID is available."
+    exit 3
+  }
+
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id" \
+    --create --type string --set applicationsmenu
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/show-button-title" \
+    --create --type bool --set false
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/button-title" \
+    --create --type string --set Applications
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/button-icon" \
+    --create --type string --set start-here
+  xfconf-query -c "$channel" -p "/plugins/plugin-$menu_id/show-menu-icons" \
+    --create --type bool --set true
+
+  panel_ids=("$menu_id" "${current_ids[@]}")
+  args=(xfconf-query -c "$channel" -p "$panel_path" --force-array)
+  for id in "${panel_ids[@]}"; do
+    args+=(--type int --set "$id")
+  done
+  "${args[@]}"
+else
+  echo "[DroidDesk Panel] Applications menu already exists on the bottom panel (plugin $menu_id)."
+fi
+
+xfce4-panel --restart
+xfconf-query -c "$channel" -p "$panel_path" >/dev/null
+echo "[DroidDesk Panel] Applications menu is active on bottom panel 2."
+PANEL_MENU
+  then
+    PANEL_MENU_CONFIGURED=1
+  else
+    echo "[DroidDesk Panel] WARNING: the Applications menu could not be activated in this session."
+  fi
+else
+  echo "[DroidDesk Panel] WARNING: XFCE D-Bus session is not available; menu setup will be retried."
 fi
 
 chown -R kali:kali /home/kali/.config /home/kali/.local /home/kali/Desktop /home/kali/Applications 2>/dev/null || true

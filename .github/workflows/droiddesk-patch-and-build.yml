@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.32+49
+name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.33+50
 
 on:
   workflow_dispatch:
@@ -36,6 +36,7 @@ on:
       - 'app/lib/state/app_state.dart'
       - 'app/lib/screens/apps/app_catalog_screen.dart'
       - 'app/lib/services/update_service.dart'
+      - 'app/test/services/update_service_test.dart'
       - 'app/lib/widgets/update_sheet.dart'
       - 'app/lib/screens/setup/setup_progress.dart'
       - 'app/lib/screens/home_screen.dart'
@@ -149,7 +150,7 @@ jobs:
               'fun scheduleKaliDesktopExperienceMigration(rootfs: File)',
               'glycin-proot-compat-v1',
               'xfce-support-v1',
-              'desktop-experience-v15',
+              'desktop-experience-v16',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
               'val minimumVersion = "2.2.2+ds-1"',
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
@@ -259,10 +260,11 @@ jobs:
           ]
 
           required_desktop_activity = [
-              'kaliHealthCheckInProgress',
-              'KaliDesktopHealthCheck',
-              'linuxRuntime.waitForKaliDesktopReady(rootfs, timeoutSeconds = timeoutSeconds)',
-              'linuxRuntime.isKaliDesktopProcessSetReady(File(filesDir, "rootfs"))',
+              'Existing Linux desktop process is alive',
+              'releaseX11ConnectionForBackground()',
+              'connectToX11ServiceIfNeeded()',
+              'x11ReconnectAttempts < 4',
+              'Scheduling X11 reconnect attempt',
               'startKaliDesktopWithRecovery()',
               'val startupTimeouts = intArrayOf(45, 35)',
               'getLastKaliDesktopDiagnostic()',
@@ -454,8 +456,8 @@ jobs:
           ):
               missing.append('reconnect the X11 client when DesktopActivity resumes after losing its surface')
 
-          if 'version: 1.4.32+49' not in pubspec:
-              missing.append('expected release version 1.4.32+49')
+          if 'version: 1.4.33+50' not in pubspec:
+              missing.append('expected release version 1.4.33+50')
           if 'private val kaliAptTransactionLock = ReentrantLock(true)' not in runtime or 'kaliAptTransactionLock.withLock' not in runtime:
               missing.append('serialize Kali App Store APT operations against desktop migrations')
           if 'private fun refreshKaliPackageIndexes(' not in runtime or 'apt-get -o Acquire::ForceIPv4=true' not in runtime:
@@ -501,6 +503,10 @@ jobs:
               missing.append('per-app Updates must upgrade installed Kali packages')
           if 'upgradePackage(' not in app_catalog or 'upgradePackage(' not in app_state:
               missing.append('route the Updates tab through its own AppState upgrade operation')
+          if 'releases?per_page=20' not in update_service or 'selectNewerRelease' not in update_service:
+              missing.append('discover newer stable and prerelease releases from the GitHub release collection')
+          if 'if (arm64Assets.isEmpty) continue' not in update_service or 'build?.group(1)' not in update_service:
+              missing.append('offer only ARM64 APKs and compare build numbers in version tags')
           if 'upgradeNativePackage' not in platform_bridge or '"upgradeNativePackage" ->' not in activity:
               missing.append('wire the explicit per-package upgrade through the platform channel')
           if 'if (_isInstalledName(packageName)) return true;' not in app_catalog:
@@ -511,6 +517,12 @@ jobs:
               missing.append('parse dpkg status directly and track arbitrary packages installed from the store')
           if 'DroidDesk App Store package:' not in runtime or 'dpkg-query -L' not in runtime:
               missing.append('create managed XFCE desktop launchers for installed GUI packages')
+          if (
+              'Install the XFCE Applications menu on the bottom panel' not in desktop_experience_script or
+              '/panels/panel-2/plugin-ids' not in desktop_experience_script or
+              'applicationsmenu' not in desktop_experience_script
+          ):
+              missing.append('add the native Applications menu to the existing bottom XFCE panel')
           if 'KaliDpkgPackage' not in kali_dpkg_parser or 'install ok installed' not in kali_dpkg_parser:
               missing.append('parse only fully configured Kali ARM64 and architecture-independent packages')
           if '@Test' not in kali_dpkg_parser_tests or 'ignoresUnpackedPackages' not in kali_dpkg_parser_tests:
@@ -551,8 +563,8 @@ jobs:
               missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
-          if 'desktop-experience-v15' not in desktop_experience_script or 'desktop-experience-v15' not in runtime:
-              missing.append('use the same v8 desktop migration marker in the script and runtime')
+          if 'desktop-experience-v16' not in desktop_experience_script or 'desktop-experience-v16' not in runtime:
+              missing.append('use the same v16 desktop migration marker in the script and runtime')
           if 'google-chrome-stable_current_arm64.deb' not in desktop_experience_script:
               missing.append('install the official Google Chrome ARM64 fallback')
           if 'droiddesk-browser.desktop' not in desktop_experience_script or 'droiddesk-browser' not in profile:
@@ -735,6 +747,10 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Run in-app update selection tests
+        working-directory: app
+        run: flutter test test/services/update_service_test.dart
+
       - name: Run rootfs archive path safety tests
         working-directory: app/android
         shell: bash
@@ -797,7 +813,7 @@ jobs:
           set -euo pipefail
           RELEASE_DIR="app/build/droiddesk-release"
           mkdir -p "$RELEASE_DIR"
-          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.32-arm64.apk"
+          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.33-arm64.apk"
           cp "app/build/app/outputs/flutter-apk/app-release.apk" "$RELEASE_APK"
           sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
           cat "$RELEASE_APK.sha256"
@@ -805,10 +821,10 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.32-arm64
+          name: Kali-Linux-1.4.33-arm64
           path: |
-            app/build/droiddesk-release/Kali-Linux-1.4.32-arm64.apk
-            app/build/droiddesk-release/Kali-Linux-1.4.32-arm64.apk.sha256
+            app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk
+            app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -818,9 +834,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "v1.4.32+49" \
-            "app/build/droiddesk-release/Kali-Linux-1.4.32-arm64.apk" \
-            "app/build/droiddesk-release/Kali-Linux-1.4.32-arm64.apk.sha256" \
-            --title "Kali Linux 1.4.32 (device-test candidate)" \
+          gh release create "v1.4.33+50" \
+            "app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk" \
+            "app/build/droiddesk-release/Kali-Linux-1.4.33-arm64.apk.sha256" \
+            --title "Kali Linux 1.4.33 (device-test candidate)" \
             --prerelease \
-            --notes "Candidate for real-device verification. Fixes Kali App Store routing and package-state parsing, creates managed XFCE desktop launchers for GUI packages, re-runs the Firefox media/launcher migration, and reconnects the X11 UI client when returning from Android screens. Preserves the permanent signing certificate and existing Kali rootfs data. Promote to stable only after phone testing."
+            --notes "Device-test candidate. Adds a native Applications menu to the bottom XFCE panel, syncs shortcuts for previously installed apps, repairs ARM64 Firefox codec selection, prevents destructive session restarts on Android screen return, adds bounded X11 reconnection and legacy drawing compatibility, and enables in-app prerelease updates. Preserves the permanent signing certificate and Kali rootfs data."
