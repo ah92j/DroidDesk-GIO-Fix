@@ -2888,7 +2888,7 @@ class LinuxRuntime(private val context: Context) {
             Log.i(TAG, "Kali ARM64 package indexes refreshed successfully")
             return@withLock true
         }
-        Log.w(TAG, "Kali package index refresh failed: ${'$'}{result.output.takeLast(1400)}")
+        Log.w(TAG, "Kali package index refresh failed: ${result.output.takeLast(1400)}")
         if (hasPackageLists) {
             onProgress(0.20, "Repository refresh failed; using the cached ARM64 package list.")
             return@withLock true
