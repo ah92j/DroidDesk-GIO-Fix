@@ -2929,39 +2929,41 @@ class LinuxRuntime(private val context: Context) {
         }.distinctBy { it["name"] }.toList()
     }
 
-    fun searchKaliPackages(rootfs: File, query: String, limit: Int = 60): List<Map<String, Any>> {
-        if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
-        val cleanQuery = query.trim().take(60)
-        if (!cleanQuery.matches(Regex("[A-Za-z0-9+._ -]*"))) return emptyList()
-        val pattern = cleanQuery.ifEmpty { "." }
-        val script = "test \"$(dpkg --print-architecture)\" = arm64 && apt-cache search --names-only '$pattern'"
-        val result = runKaliProotCommand(
-            rootfs = rootfs,
-            workingDirectory = "/root",
-            guestCommand = kaliStoreCommand(script),
-            timeoutMinutes = 3,
-            onOutput = {},
-        )
-        val installed = kaliInstalledPackageRecords(rootfs).associateBy { it["name"] as String }
-        return result.output.lineSequence().mapNotNull { line ->
-            val separator = line.indexOf(" - ")
-            if (separator <= 0) return@mapNotNull null
-            val name = line.substring(0, separator).substringBefore(':').trim()
-            if (!isSafePackageName(name)) return@mapNotNull null
-            val description = line.substring(separator + 3).trim()
-            val record = installed[name]
-            mapOf(
-                "name" to name,
-                "description" to description,
-                "version" to (record?.get("version") ?: ""),
-                "section" to (record?.get("section") ?: categoryForPackage(name, description)),
-                "installed" to (record != null),
-                "gui" to (record?.get("gui") ?: false),
-                "architecture" to "arm64",
-                "removable" to (record?.get("removable") ?: true),
+    fun searchKaliPackages(rootfs: File, query: String, limit: Int = 60): List<Map<String, Any>> =
+        kaliAptTransactionLock.withLock {
+            if (!isKaliProotDesktopInstalled(rootfs)) return@withLock emptyList()
+            val cleanQuery = query.trim().take(60)
+            if (!cleanQuery.matches(Regex("[A-Za-z0-9+._ -]*"))) return@withLock emptyList()
+            if (!refreshKaliPackageIndexes(rootfs)) return@withLock emptyList()
+            val pattern = cleanQuery.ifEmpty { "." }
+            val script = "test \"$(dpkg --print-architecture)\" = arm64 && apt-cache search --names-only '$pattern'"
+            val result = runKaliProotCommand(
+                rootfs = rootfs,
+                workingDirectory = "/root",
+                guestCommand = kaliStoreCommand(script),
+                timeoutMinutes = 3,
+                onOutput = { line -> Log.d(TAG, "Kali package search: ${line.trimEnd()}") },
             )
-        }.distinctBy { it["name"] }.take(limit.coerceIn(1, 100)).toList()
-    }
+            val installed = kaliInstalledPackageRecords(rootfs).associateBy { it["name"] as String }
+            result.output.lineSequence().mapNotNull { line ->
+                val separator = line.indexOf(" - ")
+                if (separator <= 0) return@mapNotNull null
+                val name = line.substring(0, separator).substringBefore(':').trim()
+                if (!isSafePackageName(name)) return@mapNotNull null
+                val description = line.substring(separator + 3).trim()
+                val record = installed[name]
+                mapOf(
+                    "name" to name,
+                    "description" to description,
+                    "version" to (record?.get("version") ?: ""),
+                    "section" to (record?.get("section") ?: categoryForPackage(name, description)),
+                    "installed" to (record != null),
+                    "gui" to (record?.get("gui") ?: false),
+                    "architecture" to "arm64",
+                    "removable" to (record?.get("removable") ?: true),
+                )
+            }.distinctBy { it["name"] }.take(limit.coerceIn(1, 100)).toList()
+        }
 
     fun getInstalledKaliPackages(rootfs: File, limit: Int = 500): List<Map<String, Any>> {
         if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
@@ -2988,12 +2990,20 @@ class LinuxRuntime(private val context: Context) {
         rootfs: File,
         packageName: String,
         onProgress: (Double, String) -> Unit,
+    ): Boolean = kaliAptTransactionLock.withLock {
+        installKaliStorePackageLocked(rootfs, packageName, onProgress)
+    }
+    private fun installKaliStorePackageLocked(
+        rootfs: File,
+        packageName: String,
+        onProgress: (Double, String) -> Unit,
     ): Boolean {
         val selected = resolveKaliStorePackage(packageName)
         if (!isSafePackageName(selected) || !isKaliProotDesktopInstalled(rootfs)) {
             onProgress(-1.0, "Invalid package or Kali desktop is not ready")
             return false
         }
+        if (!refreshKaliPackageIndexes(rootfs, force = true, onProgress = onProgress)) return false
         val alreadyInstalled = kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
         onProgress(
             0.12,
@@ -3007,6 +3017,9 @@ class LinuxRuntime(private val context: Context) {
               echo "Refusing package transaction: Kali architecture is ${'$'}native_arch, expected arm64."
               exit 31
             fi
+            install -d -m 0755 /home/kali/.local/share/droiddesk
+            exec > >(tee -a /home/kali/.local/share/droiddesk/package-store-install.log) 2>&1
+            trap 'chmod 0644 /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true; chown kali:kali /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true' EXIT
             package_name="$selected"
             candidate_arch="$(apt-cache show "${'$'}package_name" 2>/dev/null |
               awk '/^Architecture:/ {
@@ -3017,8 +3030,511 @@ class LinuxRuntime(private val context: Context) {
                 else if (common) print "all"
               }')"
             if [ -z "${'$'}candidate_arch" ]; then
-              echo "No ARM64 or architecture-independent build of ${'$'}package_name exists in the configured Kali repositories."
-              echo "Do not install its amd64/x86_64 file on this arm64 system."
+              available_arches="$(apt-cache show "${'
+            fi
+            if [ "${'$'}candidate_arch" = "arm64" ]; then
+              package_spec="${'$'}package_name:arm64"
+            else
+              package_spec="${'$'}package_name"
+            fi
+            echo "Installing ${'$'}package_spec from Kali repositories."
+            apt_options=(-o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+            if ! DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"; then
+              echo "[DroidDesk App Store] First install attempt failed; repairing dpkg and dependencies."
+              dpkg --configure -a || true
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --fix-broken install -y --install-recommends
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"
+            fi
+            dpkg-query -W -f='${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{Status}' "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_name" | grep -qx 'install ok installed'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_name" 2>/dev/null | awk '/^Architecture:/ { print $2 }' | sort -u | paste -sd, -)"
+              echo "No ARM64 or architecture-independent build exists for ${'
+            fi
+            if [ "${'$'}candidate_arch" = "arm64" ]; then
+              package_spec="${'$'}package_name:arm64"
+            else
+              package_spec="${'$'}package_name"
+            fi
+            echo "Installing ${'$'}package_spec from Kali repositories."
+            apt_options=(-o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+            if ! DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"; then
+              echo "[DroidDesk App Store] First install attempt failed; repairing dpkg and dependencies."
+              dpkg --configure -a || true
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --fix-broken install -y --install-recommends
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"
+            fi
+            dpkg-query -W -f='${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{Status}' "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_name" | grep -qx 'install ok installed'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_name."
+              echo "Repository architectures for this package: ${'
+            fi
+            if [ "${'$'}candidate_arch" = "arm64" ]; then
+              package_spec="${'$'}package_name:arm64"
+            else
+              package_spec="${'$'}package_name"
+            fi
+            echo "Installing ${'$'}package_spec from Kali repositories."
+            apt_options=(-o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+            if ! DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"; then
+              echo "[DroidDesk App Store] First install attempt failed; repairing dpkg and dependencies."
+              dpkg --configure -a || true
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --fix-broken install -y --install-recommends
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"
+            fi
+            dpkg-query -W -f='${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{Status}' "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_name" | grep -qx 'install ok installed'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{available_arches:-not found}."
+              echo "Choose an ARM64 alternative from Add applications > Browse."
               exit 32
             fi
             if [ "${'$'}candidate_arch" = "arm64" ]; then
@@ -3027,8 +3543,147 @@ class LinuxRuntime(private val context: Context) {
               package_spec="${'$'}package_name"
             fi
             echo "Installing ${'$'}package_spec from Kali repositories."
-            DEBIAN_FRONTEND=noninteractive apt-get $aptAction -y --no-install-recommends "${'$'}package_spec"
-            dpkg-query -W -f='${'$'}{Status}' "${'$'}package_name" | grep -qx 'install ok installed'
+            apt_options=(-o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+            if ! DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"; then
+              echo "[DroidDesk App Store] First install attempt failed; repairing dpkg and dependencies."
+              dpkg --configure -a || true
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --fix-broken install -y --install-recommends
+              DEBIAN_FRONTEND=noninteractive apt-get "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{apt_options[@]}" --install-recommends $aptAction -y "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_spec"
+            fi
+            dpkg-query -W -f='${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}{Status}' "${'
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+            update-mime-database /usr/share/mime 2>/dev/null || true
+        """.trimIndent()
+        onProgress(0.28, "Installing $selected for ARM64...")
+        val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 35, onProgress = onProgress)
+        val installed = result.exitCode == 0 &&
+            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        if (packageOperationCancelled) {
+            onProgress(-1.0, "Installation cancelled")
+            return false
+        }
+        onProgress(
+            if (installed) 1.0 else -1.0,
+            if (installed) "$selected installed for ARM64" else
+                "Could not install $selected. Check the package log for architecture or dependency details.",
+        )
+        return installed
+    }
+}package_name" | grep -qx 'install ok installed'
             update-desktop-database /usr/share/applications 2>/dev/null || true
             update-mime-database /usr/share/mime 2>/dev/null || true
         """.trimIndent()
@@ -3074,20 +3729,20 @@ class LinuxRuntime(private val context: Context) {
     fun getKaliUpgradablePackages(
         rootfs: File,
         refresh: Boolean = false,
-    ): List<Map<String, Any>> {
-        if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
-        val updatePrefix = if (refresh) "apt-get -o Acquire::Retries=3 update >/dev/null 2>&1 && " else ""
+    ): List<Map<String, Any>> = kaliAptTransactionLock.withLock {
+        if (!isKaliProotDesktopInstalled(rootfs)) return@withLock emptyList()
+        if (refresh && !refreshKaliPackageIndexes(rootfs, force = true)) return@withLock emptyList()
         val result = runKaliProotCommand(
             rootfs = rootfs,
             workingDirectory = "/root",
             guestCommand = kaliStoreCommand(
-                "$updatePrefix apt list --upgradable 2>/dev/null || true",
+                "test \\"\$(dpkg --print-architecture)\\" = arm64 && apt list --upgradable 2>/dev/null || true",
             ),
             timeoutMinutes = if (refresh) 10 else 3,
             onOutput = {},
         )
         val installed = kaliInstalledPackageRecords(rootfs).associateBy { it["name"] as String }
-        return result.output.lineSequence().mapNotNull { line ->
+        result.output.lineSequence().mapNotNull { line ->
             if (!line.contains("[upgradable from:")) return@mapNotNull null
             val name = line.substringBefore('/').trim()
             if (!isSafePackageName(name) || isKaliStoreProtectedPackage(name)) return@mapNotNull null
