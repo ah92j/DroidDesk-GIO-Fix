@@ -195,7 +195,7 @@ jobs:
           ]
 
           required_profile = [
-              '.droiddesk-xfce-mobile-v22',
+              '.droiddesk-xfce-mobile-v23',
               'xsettingsConfig(iconThemeName: String)',
               'iconThemeName: String = "Adwaita"',
               'value="$iconThemeName"',
@@ -446,7 +446,7 @@ jobs:
               missing.append('updater must check releases from the APK publishing repository')
           if 'bool force = false' not in update_service or 'checkForUpdate(force: true)' not in app_state:
               missing.append('check GitHub for a newer APK as soon as an older app launches')
-          if 'launchUrl(Uri.parse(release.apkUrl)' not in update_sheet:
+          if 'Uri.parse(release.apkUrl)' not in update_sheet or 'Direct APK download link' not in update_sheet:
               missing.append('show a direct APK download link in the update prompt')
           if "firefox-esr" not in app_catalog or "chromium" not in app_catalog or "thunderbird" not in app_catalog:
               missing.append('include core ARM64 desktop applications in Featured')
