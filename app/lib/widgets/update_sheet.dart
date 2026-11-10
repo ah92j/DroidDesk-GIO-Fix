@@ -220,6 +220,17 @@ class _UpdateSheetState extends State<UpdateSheet> with WidgetsBindingObserver {
                       : 'Update',
             ),
           ),
+        if (!mismatch) ...[
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: () => launchUrl(
+              Uri.parse(release.apkUrl),
+              mode: LaunchMode.externalApplication,
+            ),
+            icon: const Icon(Icons.download_rounded, size: 18),
+            label: const Text('Direct APK download link'),
+          ),
+        ],
         const SizedBox(height: 6),
         Row(
           children: [
