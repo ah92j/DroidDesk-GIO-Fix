@@ -855,7 +855,7 @@ class LinuxRuntime(private val context: Context) {
             """.trimIndent(),
         )
         runCatching {
-            runKaliProotCommand(rootfs, "/home/kali", cleanup, 1) { }
+            runKaliProotCommand(rootfs, "/home/kali", cleanup, 1, onOutput = {})
         }.onFailure { Log.w(TAG, "Kali stale-session cleanup failed", it) }
     }
 
@@ -2861,7 +2861,7 @@ class LinuxRuntime(private val context: Context) {
                 "gui" to gui,
                 "removable" to !isKaliStoreProtectedPackage(name),
             )
-        }.distinctBy { it["name"] }
+        }.distinctBy { it["name"] }.toList()
     }
 
     fun searchKaliPackages(rootfs: File, query: String, limit: Int = 60): List<Map<String, Any>> {
