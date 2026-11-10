@@ -23,7 +23,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
   [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v10" ]]
-  grep -Fq 'codec_package="libavcodec-extra$codec_abi"' "$0"
+  grep -q 'apt-cache depends firefox-esr' "$0"
+  grep -q 'libavcodec-extra' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
   grep -q 'user_pref("media.rdd-process.enabled", true);' "$0"
   grep -q 'user_pref("media.rdd-ffmpeg.enabled", true);' "$0"
