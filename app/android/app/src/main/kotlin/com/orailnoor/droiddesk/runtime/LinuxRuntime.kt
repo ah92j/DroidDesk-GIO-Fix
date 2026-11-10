@@ -3116,7 +3116,7 @@ class LinuxRuntime(private val context: Context) {
             rootfs = rootfs,
             workingDirectory = "/root",
             guestCommand = kaliStoreCommand(
-                "test \\"\$(dpkg --print-architecture)\\" = arm64 && apt list --upgradable 2>/dev/null || true",
+                "test \"${'$'}(dpkg --print-architecture)\" = arm64 && apt list --upgradable 2>/dev/null || true",
             ),
             timeoutMinutes = if (refresh) 10 else 3,
             onOutput = {},
