@@ -791,6 +791,22 @@ class AppState extends ChangeNotifier {
     return ok;
   }
 
+  /// Upgrades one package from the Updates tab, separate from an Install request.
+  Future<bool> upgradePackage(
+    String package, {
+    String? displayName,
+    List<String> iconNames = const [],
+  }) async {
+    if (_activePackage != null) return false;
+    _startPackageOperation(package, displayName ?? package, iconNames, removing: false);
+    var ok = false;
+    try {
+      ok = await DroidDeskPlatform.upgradeNativePackage(package);
+    } catch (_) {}
+    _finishPackageOperation(ok);
+    return ok;
+  }
+
   Future<bool> removePackage(
     String package, {
     String? displayName,

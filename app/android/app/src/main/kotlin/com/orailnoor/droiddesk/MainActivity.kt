@@ -563,6 +563,20 @@ class MainActivity : FlutterActivity() {
                     }
                 }
 
+                "upgradeNativePackage" -> {
+                    val packageName = call.argument<String>("package") ?: ""
+                    val kaliRootfs = activeKaliProotRootfs()
+                    if (kaliRootfs != null) {
+                        runPackageOperation(flutterEngine, result, packageName, remove = false) { progress ->
+                            linuxRuntime.upgradeKaliStorePackage(kaliRootfs, packageName, progress)
+                        }
+                    } else {
+                        // The native package installer upgrades an installed package when its
+                        // repository candidate is newer, so retain that fallback behavior.
+                        runPackageOperation(flutterEngine, result, packageName, remove = false)
+                    }
+                }
+
                 "getUpgradablePackages" -> {
                     val refresh = call.argument<Boolean>("refresh") ?: false
                     thread(name = "upgradable-packages") {

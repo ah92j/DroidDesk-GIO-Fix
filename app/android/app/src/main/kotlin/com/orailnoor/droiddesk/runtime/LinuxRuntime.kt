@@ -2901,8 +2901,7 @@ refresh_kali_indexes() {
       update 2>&1 | tee "${'$'}update_log"; then
       if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "${'$'}update_log" &&
          grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "${'$'}update_log" &&
-         grep -Eq 'arm64 Packages' "${'$'}update_log" &&
-         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -size +0c -print -quit | grep -q .; then
         echo "[DroidDesk App Store] Kali ARM64 repository is ready: ${'$'}candidate"
         successful=1
         rm -f "${'$'}update_log"
@@ -2925,7 +2924,10 @@ refresh_kali_indexes() {
         onProgress: (Double, String) -> Unit = { _, _ -> },
     ): Boolean = kaliAptTransactionLock.withLock {
         val listsDir = File(rootfs, "var/lib/apt/lists")
-        val hasPackageLists = listsDir.listFiles()?.any { it.isFile && it.name.contains("binary-arm64") && it.name.contains("Packages") } == true
+        val hasPackageLists = listsDir.listFiles()?.any {
+            it.isFile && it.length() > 0L &&
+                it.name.contains("binary-arm64") && it.name.contains("Packages")
+        } == true
         val cacheDir = File(rootfs, "root/.cache/droiddesk").apply { mkdirs() }
         val stamp = File(cacheDir, "kali-package-index-updated")
         val attempt = File(cacheDir, "kali-package-index-attempt")
@@ -3067,13 +3069,22 @@ refresh_kali_indexes() {
         packageName: String,
         onProgress: (Double, String) -> Unit,
     ): Boolean = kaliAptTransactionLock.withLock {
-        installKaliStorePackageLocked(rootfs, packageName, onProgress)
+        installKaliStorePackageLocked(rootfs, packageName, onProgress, upgradeOnly = false)
+    }
+
+    fun upgradeKaliStorePackage(
+        rootfs: File,
+        packageName: String,
+        onProgress: (Double, String) -> Unit,
+    ): Boolean = kaliAptTransactionLock.withLock {
+        installKaliStorePackageLocked(rootfs, packageName, onProgress, upgradeOnly = true)
     }
 
     private fun installKaliStorePackageLocked(
         rootfs: File,
         packageName: String,
         onProgress: (Double, String) -> Unit,
+        upgradeOnly: Boolean,
     ): Boolean {
         val selected = resolveKaliStorePackage(packageName)
         if (!isSafePackageName(selected) || !isKaliProotDesktopInstalled(rootfs)) {
@@ -3081,15 +3092,28 @@ refresh_kali_indexes() {
             return false
         }
 
-        // Refresh package metadata before checking whether Kali has an ARM64 build.
-        if (!refreshKaliPackageIndexes(rootfs, force = true, onProgress = onProgress)) return false
+        // A normal Get request is idempotent: an installed ARM64 package is already a success.
+        val alreadyInstalledForArm64 = kaliInstalledPackageRecords(rootfs).any {
+            it["name"] == selected && it["architecture"] in setOf("arm64", "all")
+        }
+        if (!upgradeOnly && alreadyInstalledForArm64) {
+            onProgress(1.0, "$selected is already installed for ARM64.")
+            Log.i(TAG, "Skipping duplicate Kali App Store install; $selected is already installed.")
+            return true
+        }
+        if (upgradeOnly && !alreadyInstalledForArm64) {
+            onProgress(-1.0, "$selected is not installed for ARM64; update was not started.")
+            return false
+        }
 
-        val alreadyInstalled = kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        // Reuse the six-hour cache when valid; refresh only missing or stale ARM64 indexes.
+        if (!refreshKaliPackageIndexes(rootfs, force = false, onProgress = onProgress)) return false
+
         onProgress(
             0.18,
-            if (alreadyInstalled) "Checking update for $selected..." else "Checking Kali ARM64 package availability...",
+            if (upgradeOnly) "Checking update for $selected..." else "Checking Kali ARM64 package availability...",
         )
-        val aptAction = if (alreadyInstalled) "install --only-upgrade" else "install"
+        val aptAction = if (upgradeOnly) "install --only-upgrade" else "install"
         val script = """
             set -Eeuo pipefail
             ${kaliAptMirrorFailoverScript()}
@@ -3204,10 +3228,14 @@ POLICY
             echo "[DroidDesk App Store] Verified ${'$'}package_name is installed for ARM64."
         """.trimIndent()
 
-        onProgress(0.28, "Installing $selected for ARM64...")
+        onProgress(0.28, if (upgradeOnly) "Updating $selected for ARM64..." else "Installing $selected for ARM64...")
         val result = runKaliStoreCommand(rootfs, script, timeoutMinutes = 40, onProgress = onProgress)
-        val installed = result.exitCode == 0 &&
-            kaliInstalledPackageRecords(rootfs).any { it["name"] == selected }
+        val installedForArm64 = kaliInstalledPackageRecords(rootfs).any {
+            it["name"] == selected && it["architecture"] in setOf("arm64", "all")
+        }
+        // For a fresh install, dpkg's final installed state is authoritative even if a
+        // post-install maintenance step returned non-zero. A requested upgrade must exit cleanly.
+        val installed = installedForArm64 && (!upgradeOnly || result.exitCode == 0)
 
         if (packageOperationCancelled) {
             onProgress(-1.0, "Installation cancelled")
@@ -3218,7 +3246,9 @@ POLICY
         }
         onProgress(
             if (installed) 1.0 else -1.0,
-            if (installed) "$selected installed for ARM64" else
+            if (installed) {
+                if (upgradeOnly) "$selected updated for ARM64" else "$selected installed for ARM64"
+            } else
                 "Could not install $selected (APT exit ${result.exitCode}). Details: /home/kali/.local/share/droiddesk/package-store-install.log",
         )
         return installed

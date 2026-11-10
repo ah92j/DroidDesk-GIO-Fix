@@ -311,6 +311,8 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   }
 
   Future<bool> _install(String packageName) async {
+    // Stale UI state must never turn a Get tap into an implicit package upgrade.
+    if (_isInstalledName(packageName)) return true;
     final featured = _featuredFor(packageName);
     final ok = await context.read<AppState>().installPackage(
       packageName,
@@ -411,9 +413,18 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
   }
 
   Future<void> _updateOne(_PackageItem package) async {
-    final ok = await _install(package.name);
-    if (!mounted || !ok) return;
-    setState(() => _updates = _updates.where((p) => p.name != package.name).toList());
+    final featured = _featuredFor(package.name);
+    final ok = await context.read<AppState>().upgradePackage(
+      package.name,
+      displayName: featured?.name ?? package.displayName,
+      iconNames: featured?.iconNames ?? const [],
+    );
+    await _loadInstalled();
+    if (!mounted) return;
+    _showResultSnack(ok);
+    if (!ok) return;
+    _updatesChecked = false;
+    await _loadUpdates();
   }
 
   @override
@@ -904,8 +915,7 @@ class _AppCatalogScreenState extends State<AppCatalogScreen> {
     Future<void> Function()? onInstall,
     bool prominent = false,
   }) {
-    final installed =
-        package.installed || _installedNames.contains(package.name);
+    final installed = package.installed || _isInstalledName(package.name);
     final appState = context.watch<AppState>();
     final busy = appState.activePackage != null;
     final active = appState.activePackage == package.name;

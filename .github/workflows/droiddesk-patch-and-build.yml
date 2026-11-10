@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # final verified 1.4.30+47 publish trigger
+name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.31+48
 
 on:
   workflow_dispatch:
@@ -440,8 +440,8 @@ jobs:
           if 'sessionMode == "proot-kali" -> 65' not in desktop_activity:
               missing.append('Kali desktop readiness timeout estimate')
 
-          if 'version: 1.4.30+47' not in pubspec:
-              missing.append('expected release version 1.4.30+47')
+          if 'version: 1.4.31+48' not in pubspec:
+              missing.append('expected release version 1.4.31+48')
           if 'private val kaliAptTransactionLock = ReentrantLock(true)' not in runtime or 'kaliAptTransactionLock.withLock' not in runtime:
               missing.append('serialize Kali App Store APT operations against desktop migrations')
           if 'private fun refreshKaliPackageIndexes(' not in runtime or 'apt-get -o Acquire::ForceIPv4=true' not in runtime:
@@ -457,8 +457,14 @@ jobs:
           store_command = runtime[store_command_start:store_command_end]
           if 'onProgress(0.55' in store_command or 'Reading database.*?([0-9]{1,3})%' not in store_command:
               missing.append('report actual APT stages instead of a fixed 55 percent value')
-          if 'refreshKaliPackageIndexes(rootfs, force = true, onProgress = onProgress)' not in runtime:
-              missing.append('force a fresh ARM64 package index before App Store installs')
+          if 'refreshKaliPackageIndexes(rootfs, force = false, onProgress = onProgress)' not in runtime:
+              missing.append('reuse a valid six-hour ARM64 index cache during installs')
+          if 'if (!upgradeOnly && alreadyInstalledForArm64)' not in runtime:
+              missing.append('return Installed before refreshing repositories when a Get request targets an installed ARM64 package')
+          if 'fun upgradeKaliStorePackage(' not in runtime or 'val aptAction = if (upgradeOnly) "install --only-upgrade" else "install"' not in runtime:
+              missing.append('keep explicit per-app upgrades separate from normal installs')
+          if '-size +0c' not in runtime or "grep -Eq 'arm64 Packages'" in runtime:
+              missing.append('accept cached non-empty ARM64 indexes without relying on an apt output phrase')
           if 'Wrong package architecture.' not in desktop_experience_script or 'Related repository matches' not in desktop_experience_script:
               missing.append('explain AMD64 versus ARM64 and list repository alternatives')
           if "static const repo = 'ah92j/DroidDesk-GIO-Fix';" not in update_service:
@@ -479,6 +485,12 @@ jobs:
               missing.append('recognize Firefox ESR as the installed Firefox app')
           if "Future<bool> _install" not in app_catalog or "install --only-upgrade" not in runtime:
               missing.append('per-app Updates must upgrade installed Kali packages')
+          if 'upgradePackage(' not in app_catalog or 'upgradePackage(' not in app_state:
+              missing.append('route the Updates tab through its own AppState upgrade operation')
+          if 'upgradeNativePackage' not in platform_bridge or '"upgradeNativePackage" ->' not in activity:
+              missing.append('wire the explicit per-package upgrade through the platform channel')
+          if 'if (_isInstalledName(packageName)) return true;' not in app_catalog:
+              missing.append('guard Get taps against stale already-installed UI state')
           if 'fun searchKaliPackages(rootfs: File' not in runtime or 'fun installKaliStorePackage(' not in runtime:
               missing.append('Kali app store must search and install inside the Kali ARM64 rootfs')
           if 'linuxRuntime.searchKaliPackages(kaliRootfs' not in activity or 'linuxRuntime.installKaliStorePackage(kaliRootfs' not in activity:
@@ -751,12 +763,35 @@ jobs:
 
           echo "APK certificate matches the permanent DroidDesk release key."
 
+      - name: Prepare versioned release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="app/build/droiddesk-release"
+          mkdir -p "$RELEASE_DIR"
+          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.31-arm64.apk"
+          cp "app/build/app/outputs/flutter-apk/app-release.apk" "$RELEASE_APK"
+          sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
+          cat "$RELEASE_APK.sha256"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.30-arm64
-          path: app/build/app/outputs/flutter-apk/app-release.apk
+          name: Kali-Linux-1.4.31-arm64
+          path: |
+            app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk
+            app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
-# Release trigger: Kali Linux 1.4.19 source fixes and desktop migration.
+      - name: Publish verified GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v1.4.31+48" \\
+            "app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk" \\
+            "app/build/droiddesk-release/Kali-Linux-1.4.31-arm64.apk.sha256" \\
+            --title "Kali Linux 1.4.31" \\
+            --notes "Fixes false App Store install failures for packages already installed. Separates Get from per-package Updates, reuses valid Kali ARM64 indexes, and accepts cached ARM64 indexes when APT reports an InRelease cache hit. Keeps the permanent APK signing certificate and existing Kali rootfs data."

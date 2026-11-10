@@ -240,6 +240,14 @@ class DroidDeskPlatform {
         false;
   }
 
+  /// Upgrades one already-installed package without changing the meaning of Get/Install.
+  static Future<bool> upgradeNativePackage(String packageName) async {
+    return await _channel.invokeMethod<bool>('upgradeNativePackage', {
+          'package': packageName,
+        }) ??
+        false;
+  }
+
   /// Installed packages with newer versions; [refresh] runs `apt-get update` first (slow).
   static Future<List<Map<String, dynamic>>> getUpgradablePackages({bool refresh = false}) async {
     final result = await _channel.invokeMethod<List<dynamic>>(
