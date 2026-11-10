@@ -250,8 +250,8 @@ class DesktopActivity : Activity() {
         activityResumed = false
         x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
         clipboardSync?.stop()
-        // Keep the Lorie/X11 client attached while MainActivity or Android merely
-        // covers this Activity. Disconnect only when the Surface is actually destroyed
+        // Keep the X11 client attached while MainActivity covers Desktop or Android temporarily.
+        // Disconnect only when the Surface is actually destroyed
         // or this Activity is destroyed; detaching on every onPause caused black returns.
         super.onPause()
     }
@@ -402,15 +402,15 @@ class DesktopActivity : Activity() {
     }
 
     private fun scheduleX11Reconnect(reason: String) {
-        if (!activityResumed || isFinishing || isDestroyed ||
-            lorieView?.holder?.surface?.isValid != true || x11ReconnectAttempts >= 8
-        ) return
-
-        val delay = (500L shl x11ReconnectAttempts.coerceAtMost(4)).coerceAtMost(8_000L)
-        x11ReconnectAttempts++
-        Log.w(TAG, "Scheduling X11 reconnect attempt $x11ReconnectAttempts in ${delay}ms after: $reason")
-        x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
-        x11ReconnectHandler.postDelayed(x11ReconnectRunnable, delay)
+        if (activityResumed && !isFinishing && !isDestroyed &&
+            lorieView?.holder?.surface?.isValid == true && x11ReconnectAttempts < 8
+        ) {
+            val delay = (500L shl x11ReconnectAttempts.coerceAtMost(4)).coerceAtMost(8_000L)
+            x11ReconnectAttempts++
+            Log.w(TAG, "Scheduling X11 reconnect attempt $x11ReconnectAttempts in ${delay}ms after: $reason")
+            x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
+            x11ReconnectHandler.postDelayed(x11ReconnectRunnable, delay)
+        }
     }
 
     private fun attachDesktopInput() {
