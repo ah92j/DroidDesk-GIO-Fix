@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v14"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v15"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -22,7 +22,9 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-2026' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v14" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v15" ]]
+  grep -q 'codec_recommendations' "$0"
+  grep -q 'Route stock package-provided launchers through the same audio/codec wrapper' "$0"
   grep -q 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' "$0"
   grep -q 'archive.kali.org/kali/' "$0"
   grep -Fq 'libavcodec-extra$codec_abi' "$0"
@@ -214,16 +216,22 @@ fi
 # If the system FFmpeg ABI is not installed yet, use only direct, available Firefox
 # recommendations. Angle-bracket alternatives are virtual/missing candidates and skipped.
 if [[ -z "$codec_candidate" ]]; then
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    if package_supports_kali_arm64 "$candidate"; then
-      codec_candidate="$candidate"
-      break
-    fi
-  done < <(
+  # Read both the primary Recommends field and its "|" alternatives. Prefer the
+  # codec-enabled ABI-matched package before the basic FFmpeg runtime.
+  mapfile -t codec_recommendations < <(
     apt-cache depends firefox-esr 2>/dev/null |
-      sed -nE 's/^[[:space:]]*Recommends:[[:space:]]+(libavcodec-extra[0-9]+|libavcodec[0-9]+)$/\1/p'
+      sed -nE 's/^[[:space:]]*(Recommends:|\|)[[:space:]]*(libavcodec-extra[0-9]+|libavcodec[0-9]+)$/\2/p' |
+      sort -u
   )
+  for codec_prefix in libavcodec-extra libavcodec; do
+    for candidate in "${codec_recommendations[@]}"; do
+      [[ "$candidate" == "$codec_prefix"* ]] || continue
+      if package_supports_kali_arm64 "$candidate"; then
+        codec_candidate="$candidate"
+        break 2
+      fi
+    done
+  done
 fi
 
 if [[ -n "$codec_candidate" ]]; then
@@ -437,6 +445,19 @@ FIREFOX_DESKTOP
   cp -f /home/kali/.local/share/applications/droiddesk-firefox.desktop /home/kali/Desktop/Firefox.desktop
   chmod 0755 /home/kali/.local/share/applications/droiddesk-firefox.desktop /home/kali/Desktop/Firefox.desktop
 fi
+
+# Route stock package-provided launchers through the same audio/codec wrapper.
+# Menu launchers otherwise bypass the environment used by the desktop shortcut.
+for launcher in /usr/share/applications/*firefox*.desktop /usr/local/share/applications/*firefox*.desktop; do
+  [[ -f "$launcher" ]] || continue
+  grep -Eiq '^Exec=.*(firefox-esr|firefox)([[:space:]]|$)' "$launcher" || continue
+  sed -i -E '/^Exec=/s|=.*|=/home/kali/.local/bin/droiddesk-firefox %u|' "$launcher"
+  if grep -q '^TryExec=' "$launcher"; then
+    sed -i 's|^TryExec=.*|TryExec=/home/kali/.local/bin/droiddesk-firefox|' "$launcher"
+  fi
+  echo "[DroidDesk Firefox] Routed XFCE launcher through the media wrapper: $launcher"
+done
+update-desktop-database /usr/share/applications 2>/dev/null || true
 
 # Keep Firefox's isolated RDD media process enabled. Disabling RDD can remove the normal
 # external decoder path for H.264/AAC on some Firefox ESR builds. Hardware/VA-API stays off.

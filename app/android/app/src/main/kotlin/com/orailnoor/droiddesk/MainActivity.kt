@@ -1148,9 +1148,10 @@ class MainActivity : FlutterActivity() {
 
     /** Returns the installed, rootless Kali rootfs when this app is managing one. */
     private fun activeKaliProotRootfs(): File? {
-        if (chrootRuntime.hasRoot()) return null
-        val rootfs = File(filesDir, "rootfs")
-        return rootfs.takeIf { linuxRuntime.isKaliProotDesktopInstalled(it) }
+        if (chrootRuntime.hasRoot() || chrootRuntime.getInstalledDistro() != "kali") return null
+        // Once Kali is selected, store calls must never fall through to native Termux.
+        // Kali runtime methods report an incomplete rootfs instead of installing elsewhere.
+        return File(filesDir, "rootfs")
     }
 
     private fun runPackageOperation(

@@ -172,6 +172,10 @@ class DesktopActivity : Activity() {
     override fun onResume() {
         super.onResume()
         enableImmersiveMode()
+        if (isSetupDone && lorieView?.holder?.surface?.isValid == true) {
+            Log.i(TAG, "DesktopActivity resumed with a valid X11 surface; reconnecting input client")
+            connectToX11ServiceIfNeeded()
+        }
         restartSessionIfStopped()
     }
 
@@ -242,6 +246,9 @@ class DesktopActivity : Activity() {
 
     override fun onPause() {
         clipboardSync?.stop()
+        // MainActivity can cover the desktop temporarily. Drop only the UI-side
+        // Binder/client connection; keep the X server and Linux session alive.
+        releaseX11ConnectionForBackground()
         super.onPause()
     }
 
@@ -306,18 +313,35 @@ class DesktopActivity : Activity() {
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                 Log.i(TAG, "LorieView surfaceChanged ${width}x${height}")
-                synchronized(this@DesktopActivity) {
-                    if (!connectionRequested) {
-                        connectionRequested = true
-                        connectToX11Service()
-                    }
-                }
+                connectToX11ServiceIfNeeded()
             }
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                Log.i(TAG, "LorieView surfaceDestroyed")
+                Log.i(TAG, "LorieView surfaceDestroyed; releasing stale X11 client binding")
+                releaseX11ConnectionForBackground()
             }
         }.also { lorieView!!.holder.addCallback(it) }
+    }
+
+    private fun connectToX11ServiceIfNeeded() {
+        val shouldConnect = synchronized(this) {
+            if (connectionRequested || isFinishing || isDestroyed) {
+                false
+            } else {
+                connectionRequested = true
+                true
+            }
+        }
+        if (shouldConnect) connectToX11Service()
+    }
+
+    private fun releaseX11ConnectionForBackground() {
+        synchronized(this) {
+            connectionRequested = false
+            x11ServiceClient?.disconnect()
+            x11ServiceClient = null
+            X11ServiceClient.connectedServerPid = -1
+        }
     }
 
     private fun connectToX11Service() {
@@ -343,7 +367,14 @@ class DesktopActivity : Activity() {
                     showX11Error("Failed to attach LorieView to the X11 service", error)
                 }
             },
-            onError = ::showX11Error,
+            onError = { message, error ->
+                synchronized(this) {
+                    connectionRequested = false
+                    x11ServiceClient?.disconnect()
+                    x11ServiceClient = null
+                }
+                showX11Error(message, error)
+            },
         ).also { it.connect() }
     }
 
@@ -940,8 +971,7 @@ class DesktopActivity : Activity() {
         surfaceCallback = null
         inputController?.dispose()
         inputController = null
-        x11ServiceClient?.disconnect()
-        x11ServiceClient = null
+        releaseX11ConnectionForBackground()
         intentListenerThread?.interrupt()
         intentListenerThread = null
         if (current?.get() === this) current = null

@@ -867,7 +867,7 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v14")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v15")
         if (completionMarker.isFile) return true
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -907,7 +907,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v14").isFile
+                File(rootfs, "root/.droiddesk/desktop-experience-v15").isFile
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -2976,35 +2976,34 @@ refresh_kali_indexes() {
     }
 
     private fun kaliInstalledPackageRecords(rootfs: File): List<Map<String, Any>> {
-        val script = "dpkg-query -W -f='${'$'}{Package}\\t${'$'}{Version}\\t${'$'}{Architecture}\\t${'$'}{Status}\\t${'$'}{Section}\\n' 2>/dev/null || true"
-        val result = runKaliProotCommand(
-            rootfs = rootfs,
-            workingDirectory = "/root",
-            guestCommand = kaliStoreCommand(script),
-            timeoutMinutes = 3,
-            onOutput = {},
-        )
-        return result.output.lineSequence().mapNotNull { line ->
-            val fields = line.split('\t')
-            if (fields.size < 5 || fields[3] != "install ok installed") return@mapNotNull null
-            val name = fields[0].substringBefore(':').trim()
-            if (!isSafePackageName(name)) return@mapNotNull null
-            val descriptionFile = File(rootfs, "var/lib/dpkg/info/$name.list")
-            val gui = descriptionFile.isFile && descriptionFile.useLines { entries ->
-                entries.any { it.contains("/share/applications/") && it.endsWith(".desktop") }
+        val statusFile = File(rootfs, "var/lib/dpkg/status")
+        val installed = runCatching {
+            KaliDpkgStatusParser.parseInstalled(statusFile.readText())
+        }.onFailure {
+            Log.e(TAG, "Could not parse Kali dpkg status database", it)
+        }.getOrDefault(emptyList())
+
+        return installed.map { record ->
+            val name = record.name
+            val packageFiles = File(rootfs, "var/lib/dpkg/info/$name.list")
+            val gui = packageFiles.isFile && packageFiles.useLines { entries ->
+                entries.any { line ->
+                    (line.startsWith("/usr/share/applications/") ||
+                        line.startsWith("/usr/local/share/applications/")) &&
+                        line.endsWith(".desktop")
+                }
             }
-            val description = ""
             mapOf(
                 "name" to name,
-                "description" to description,
-                "version" to fields[1],
-                "architecture" to fields[2],
-                "section" to fields[4].ifBlank { categoryForPackage(name, description) },
+                "description" to "",
+                "version" to record.version,
+                "architecture" to record.architecture,
+                "section" to record.section.ifBlank { categoryForPackage(name, "") },
                 "installed" to true,
                 "gui" to gui,
                 "removable" to !isKaliStoreProtectedPackage(name),
             )
-        }.distinctBy { it["name"] }.toList()
+        }
     }
 
     fun searchKaliPackages(rootfs: File, query: String, limit: Int = 60): List<Map<String, Any>> =
@@ -3045,8 +3044,14 @@ refresh_kali_indexes() {
 
     fun getInstalledKaliPackages(rootfs: File, limit: Int = 500): List<Map<String, Any>> {
         if (!isKaliProotDesktopInstalled(rootfs)) return emptyList()
+        val trackedFile = File(rootfs, "home/kali/.local/share/droiddesk/app-store-packages")
+        val tracked = runCatching { trackedFile.readLines().filter(::isSafePackageName).toSet() }
+            .getOrDefault(emptySet())
         return kaliInstalledPackageRecords(rootfs)
-            .filter { record -> (record["name"] as? String) in kaliStoreVisiblePackages }
+            .filter { record ->
+                val name = record["name"] as? String ?: return@filter false
+                name in kaliStoreVisiblePackages || name in tracked
+            }
             .take(limit.coerceIn(1, 1000))
     }
 
@@ -3223,8 +3228,41 @@ POLICY
               exit 34
             fi
             dpkg-query -W -f='${'$'}{Status}' "${'$'}package_name" | grep -qx 'install ok installed'
+
+            # Persist every selected package and expose its GUI launchers on the XFCE desktop.
+            store_dir="/home/kali/.local/share/droiddesk"
+            tracked_packages="$store_dir/app-store-packages"
+            desktop_dir="/home/kali/Desktop"
+            install -d -m 0755 "$store_dir" "$desktop_dir"
+            touch "$tracked_packages"
+            grep -Fqx "${'$'}package_name" "$tracked_packages" || echo "${'$'}package_name" >> "$tracked_packages"
+            while IFS= read -r desktop_file; do
+              [[ -f "$desktop_file" ]] || continue
+              if grep -Eiq '^(NoDisplay|Hidden)=true' "$desktop_file"; then continue; fi
+              desktop_name="$(basename "$desktop_file")"
+              managed_shortcut="$desktop_dir/${'$'}package_name-$desktop_name"
+              temporary_shortcut="$managed_shortcut.tmp"
+              {
+                printf '# DroidDesk App Store package: %s\n' "${'$'}package_name"
+                cat "$desktop_file"
+              } > "$temporary_shortcut"
+              chmod 0755 "$temporary_shortcut"
+              chown kali:kali "$temporary_shortcut"
+              mv -f "$temporary_shortcut" "$managed_shortcut"
+              echo "[DroidDesk App Store] Added desktop launcher: $managed_shortcut"
+            done < <(
+              dpkg-query -L "${'$'}package_name" 2>/dev/null |
+                grep -E '^/(usr/share|usr/local/share)/applications/[^/]+\.desktop$' || true
+            )
+            chown kali:kali "$tracked_packages" 2>/dev/null || true
             update-desktop-database /usr/share/applications 2>/dev/null || true
             update-mime-database /usr/share/mime 2>/dev/null || true
+            session_address_file="/home/kali/.local/share/droiddesk/dbus-session-address"
+            if [[ -s "$session_address_file" ]] && pgrep -x xfdesktop >/dev/null 2>&1; then
+              session_address="$(cat "$session_address_file")"
+              sudo -E -u kali env DISPLAY=:0 XDG_RUNTIME_DIR=/tmp/runtime-kali \
+                DBUS_SESSION_BUS_ADDRESS="$session_address" xfdesktop --reload >/dev/null 2>&1 || true
+            fi
             echo "[DroidDesk App Store] Verified ${'$'}package_name is installed for ARM64."
         """.trimIndent()
 
@@ -3265,9 +3303,26 @@ POLICY
             return false
         }
         onProgress(0.2, "Removing $selected from Kali...")
+        val removeScript = """
+            set -Eeuo pipefail
+            DEBIAN_FRONTEND=noninteractive apt-get remove -y '$selected'
+            tracked="/home/kali/.local/share/droiddesk/app-store-packages"
+            if [ -f "$tracked" ]; then
+              grep -Fvx '$selected' "$tracked" > "$tracked.tmp" || true
+              mv -f "$tracked.tmp" "$tracked"
+            fi
+            for shortcut in /home/kali/Desktop/"$selected"-*.desktop; do
+              [ -f "$shortcut" ] || continue
+              if grep -Fq '# DroidDesk App Store package: $selected' "$shortcut"; then
+                rm -f "$shortcut"
+              fi
+            done
+            chown kali:kali "$tracked" 2>/dev/null || true
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+        """.trimIndent()
         val result = runKaliStoreCommand(
             rootfs,
-            "DEBIAN_FRONTEND=noninteractive apt-get remove -y '$selected'",
+            removeScript,
             timeoutMinutes = 20,
             onProgress = onProgress,
         )
