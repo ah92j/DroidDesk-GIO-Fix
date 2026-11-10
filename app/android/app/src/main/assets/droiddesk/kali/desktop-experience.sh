@@ -69,12 +69,12 @@ fi
 # currently publishes ABI 62 and 63; detect the available package instead of
 # assuming one fixed FFmpeg generation or downloading an x86_64 codec library.
 codec_abi="$(ldconfig -p 2>/dev/null |
-  sed -n 's/^[[:space:]]*libavcodec\\.so\\.\\([0-9][0-9]*\\) .*/\\1/p' |
+  sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
   sort -rn | head -n1)"
 if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
   codec_package="libavcodec-extra$codec_abi"
   if apt-cache show "$codec_package" 2>/dev/null |
-     awk -v wanted="arm64" '/^Architecture:/ { if (\$2 == wanted) found=1 } END { exit !found }'; then
+     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted) found=1 } END { exit !found }'; then
     echo "[Kali Linux] Installing only the matching ARM64 FFmpeg ABI package: $codec_package"
     apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
       -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
