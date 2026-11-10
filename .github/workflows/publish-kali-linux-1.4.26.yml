@@ -64,10 +64,12 @@ jobs:
           echo "https://raw.githubusercontent.com/ah92j/DroidDesk-GIO-Fix/apk-downloads/$FILE_NAME"
 
       - name: Publish APK as the latest GitHub Release for in-app updates
+        # The APK was built from the exact workflow_run head SHA above. Target main for the
+        # release tag because GitHub blocks GITHUB_TOKEN from creating refs at commits
+        # that alter workflow files on a non-default branch.
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           TAG="v1.4.26+43"
@@ -92,7 +94,7 @@ jobs:
           else
             gh release create "$TAG" "$FILE_NAME" \
               --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
+              --target main \
               --title "$TITLE" \
               --notes "$NOTES" \
               --latest
