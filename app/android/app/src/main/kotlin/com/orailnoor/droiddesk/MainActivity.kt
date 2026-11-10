@@ -529,35 +529,67 @@ class MainActivity : FlutterActivity() {
                     val query = call.argument<String>("query") ?: ""
                     val limit = call.argument<Int>("limit") ?: 60
                     thread(name = "package-search") {
-                        val packages = linuxRuntime.searchNativePackages(query, limit)
+                        val kaliRootfs = activeKaliProotRootfs()
+                        val packages = if (kaliRootfs != null) {
+                            linuxRuntime.searchKaliPackages(kaliRootfs, query, limit)
+                        } else {
+                            linuxRuntime.searchNativePackages(query, limit)
+                        }
                         runOnUiThread { result.success(packages) }
                     }
                 }
 
                 "getInstalledNativePackages" -> {
                     thread(name = "installed-packages") {
-                        val packages = linuxRuntime.getInstalledNativePackages()
+                        val kaliRootfs = activeKaliProotRootfs()
+                        val packages = if (kaliRootfs != null) {
+                            linuxRuntime.getInstalledKaliPackages(kaliRootfs)
+                        } else {
+                            linuxRuntime.getInstalledNativePackages()
+                        }
                         runOnUiThread { result.success(packages) }
                     }
                 }
 
                 "installNativePackage" -> {
                     val packageName = call.argument<String>("package") ?: ""
-                    runPackageOperation(flutterEngine, result, packageName, remove = false)
+                    val kaliRootfs = activeKaliProotRootfs()
+                    if (kaliRootfs != null) {
+                        runPackageOperation(flutterEngine, result, packageName, remove = false) { progress ->
+                            linuxRuntime.installKaliStorePackage(kaliRootfs, packageName, progress)
+                        }
+                    } else {
+                        runPackageOperation(flutterEngine, result, packageName, remove = false)
+                    }
                 }
 
                 "getUpgradablePackages" -> {
                     val refresh = call.argument<Boolean>("refresh") ?: false
                     thread(name = "upgradable-packages") {
-                        val packages = runCatching { linuxRuntime.getUpgradablePackages(refresh) }
-                            .getOrDefault(emptyList())
+                        val kaliRootfs = activeKaliProotRootfs()
+                        val packages = runCatching {
+                            if (kaliRootfs != null) {
+                                linuxRuntime.getKaliUpgradablePackages(kaliRootfs, refresh)
+                            } else {
+                                linuxRuntime.getUpgradablePackages(refresh)
+                            }
+                        }.getOrDefault(emptyList())
                         runOnUiThread { result.success(packages) }
                     }
                 }
 
-                "upgradeAllPackages" -> runPackageOperation(
-                    flutterEngine, result, "updates", remove = false,
-                ) { progress -> linuxRuntime.upgradeAllPackages(progress) }
+                "upgradeAllPackages" -> {
+                    val kaliRootfs = activeKaliProotRootfs()
+                    runPackageOperation(
+                        flutterEngine, result, "updates", remove = false,
+                    ) { progress ->
+                        if (kaliRootfs != null) {
+                            linuxRuntime.upgradeKaliStorePackages(kaliRootfs, progress)
+                        } else {
+                            linuxRuntime.upgradeAllPackages(progress)
+                        }
+                    }
+                }
 
                 "getStorageInfo" -> {
                     thread(name = "storage-info") {
@@ -576,7 +608,14 @@ class MainActivity : FlutterActivity() {
 
                 "removeNativePackage" -> {
                     val packageName = call.argument<String>("package") ?: ""
-                    runPackageOperation(flutterEngine, result, packageName, remove = true)
+                    val kaliRootfs = activeKaliProotRootfs()
+                    if (kaliRootfs != null) {
+                        runPackageOperation(flutterEngine, result, packageName, remove = true) { progress ->
+                            linuxRuntime.removeKaliStorePackage(kaliRootfs, packageName, progress)
+                        }
+                    } else {
+                        runPackageOperation(flutterEngine, result, packageName, remove = true)
+                    }
                 }
 
                 "cancelNativePackageOperation" -> {
@@ -1091,6 +1130,13 @@ class MainActivity : FlutterActivity() {
     private fun openDesktop(startSession: Boolean) {
         val config = resolveDesktopLaunchConfig()
         launchDesktopScreen(config, startSession)
+    }
+
+    /** Returns the installed, rootless Kali rootfs when this app is managing one. */
+    private fun activeKaliProotRootfs(): File? {
+        if (chrootRuntime.hasRoot()) return null
+        val rootfs = File(filesDir, "rootfs")
+        return rootfs.takeIf { linuxRuntime.isKaliProotDesktopInstalled(it) }
     }
 
     private fun runPackageOperation(
