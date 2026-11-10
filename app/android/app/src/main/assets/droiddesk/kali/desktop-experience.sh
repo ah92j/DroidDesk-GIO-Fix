@@ -25,7 +25,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v14" ]]
   grep -q 'export LD_LIBRARY_PATH="/usr/lib/firefox-esr:' "$0"
   grep -q 'archive.kali.org/kali/' "$0"
-  grep -q 'libavcodec-extra$codec_abi' "$0"
+  grep -Fq 'libavcodec-extra$codec_abi' "$0"
   grep -q 'codec_abi="$(ldconfig -p' "$0"
   grep -q 'apt-cache depends firefox-esr' "$0"
   grep -q 'ldd /usr/lib/firefox-esr/libmozavcodec.so' "$0"
