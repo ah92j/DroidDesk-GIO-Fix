@@ -199,7 +199,7 @@ codec_candidate=""
 package_supports_kali_arm64() {
   local package="$1"
   apt-cache show "$package" 2>/dev/null |
-    awk '/^Architecture:/ { if ($2 == "arm64" || $2 == "all") found=1 } END { exit !found }'
+    awk -v wanted=arm64 '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'
 }
 
 if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
