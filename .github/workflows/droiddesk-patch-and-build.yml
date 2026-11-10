@@ -485,7 +485,7 @@ jobs:
           if 'MiscShowThumbnails=NEVER' not in desktop_experience_script:
               missing.append('disable expensive Thunar thumbnails for mobile performance')
           if 'name="use_compositing"' not in desktop_experience_script or '! grep -q' not in desktop_experience_script:
-              missing.append('preserve a user's existing XFCE compositing setting during migration')
+              missing.append("preserve a user's existing XFCE compositing setting during migration")
           if 'background-style" type="uint" value="1"' not in desktop_experience_script:
               missing.append('set the dock panel to transparent RGBA style')
           if 'desktop-experience-v8' not in desktop_experience_script or 'desktop-experience-v8' not in runtime:
