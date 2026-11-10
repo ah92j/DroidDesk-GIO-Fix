@@ -131,24 +131,21 @@ object XfceMobileProfile {
     private fun installFileManagerDefaults(homeDir: File) {
         val configDir = File(homeDir, ".config/xfce4").apply { mkdirs() }
         val mimeApps = File(homeDir, ".config/mimeapps.list")
-        mimeApps.parentFile?.mkdirs()
-        val existingMime = if (mimeApps.isFile) mimeApps.readText() else ""
-        val mimeAdditions = buildList {
-            if (!existingMime.contains("inode/directory=")) add("inode/directory=thunar.desktop;")
-            if (!existingMime.contains("application/x-gnome-saved-search=")) {
-                add("application/x-gnome-saved-search=thunar.desktop;")
-            }
+        if (!mimeApps.isFile || mimeApps.length() == 0L) {
+            mimeApps.parentFile?.mkdirs()
+            mimeApps.writeText(
+                "[Default Applications]\n" +
+                    "inode/directory=thunar.desktop;\n" +
+                    "application/x-gnome-saved-search=thunar.desktop;\n",
+            )
         }
-        if (mimeAdditions.isNotEmpty()) {
-            val prefix = if (existingMime.isBlank()) "[Default Applications]\n" else ""
-            mimeApps.writeText(existingMime.trimEnd() + "\n" + prefix + mimeAdditions.joinToString("\n") + "\n")
-        }
+
         val helpers = File(configDir, "helpers.rc")
         val helperLines = if (helpers.isFile) helpers.readLines().toMutableList() else mutableListOf()
         if (helperLines.none { it.startsWith("FileManager=") }) helperLines += "FileManager=Thunar"
         if (helperLines.none { it.startsWith("WebBrowser=") }) helperLines += "WebBrowser=droiddesk-browser.desktop"
         helpers.writeText(helperLines.joinToString("\n", postfix = "\n"))
-        Log.i(TAG, "Added missing Thunar and browser defaults without replacing user handlers")
+        Log.i(TAG, "Added only missing Thunar and browser defaults without replacing user handlers")
     }
     private fun installPanelCss(homeDir: File) {
         val cssFile = File(homeDir, ".config/gtk-3.0/gtk.css")
