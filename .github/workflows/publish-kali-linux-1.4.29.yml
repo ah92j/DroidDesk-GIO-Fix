@@ -1,4 +1,4 @@
-name: Publish Kali Linux 1.4.29 APK and GitHub Release
+name: Publish Kali Linux 1.4.30 APK and GitHub Release
 
 on:
   workflow_run:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == '12074481f92427b989266ddae58825bc9704d2aa' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == 'cc57390561407d68042486dd70ee2f37ab111c18' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download and verify the signed ARM64 APK artifact
@@ -40,9 +40,9 @@ jobs:
             echo "Unexpected APK size: $APK_SIZE"
             exit 1
           fi
-          cp "$APK" Kali-Linux-1.4.29-arm64.apk
+          cp "$APK" Kali-Linux-1.4.30-arm64.apk
           echo "APK SHA-256:"
-          sha256sum Kali-Linux-1.4.29-arm64.apk
+          sha256sum Kali-Linux-1.4.30-arm64.apk
 
       - name: Publish stable direct APK URL while retaining previous releases
         shell: bash
@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          FILE_NAME="Kali-Linux-1.4.29-arm64.apk"
+          FILE_NAME="Kali-Linux-1.4.30-arm64.apk"
           PUBLISH_DIR="$RUNNER_TEMP/apk-downloads"
           git clone --depth=1 --single-branch --branch apk-downloads \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$PUBLISH_DIR"
@@ -69,21 +69,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="v1.4.29+46"
-          FILE_NAME="Kali-Linux-1.4.29-arm64.apk"
-          TITLE="Kali Linux 1.4.29"
+          TAG="v1.4.30+47"
+          FILE_NAME="Kali-Linux-1.4.30-arm64.apk"
+          TITLE="Kali Linux 1.4.30"
           NOTES="$(cat <<'RELEASE_NOTES'
-          DroidDesk 1.4.29+46 for Android ARM64.
+          DroidDesk 1.4.30+47 for Android ARM64.
 
-          - Fixes the App Store install failure caused by the Kotlin-selected APT action being referenced as an unset Bash variable.
-          - Refreshes Kali ARM64 repository indexes before the retry after a transient package-download or DNS failure.
-          - Forces Mesa software rendering and Firefox software WebRender in the rootless PRoot X11 session to avoid the unsupported DRI3/OpenGL shader path recorded on device.
-          - Regenerates Firefox FFmpeg, codec, rendering and PulseAudio diagnostics at browser launch, after the Android AudioTrack bridge is started.
-          - Preserves the existing Kali ARM64 rootfs, installed applications, and XFCE preferences; no reset or reinstallation of Kali is performed.
+          - Repairs Kali App Store command construction so the install/upgrade action is supplied by Kotlin and is not interpreted as an unset Bash variable.
+          - Adds official Kali HTTPS mirror failover for package index refresh and installation: the configured Kali mirror is tried first, followed by kali.download and archive.kali.org. The source is changed only in DroidDesk's dedicated Kali source file, and the catalog must contain an ARM64 package index.
+          - Retries App Store package operations after refreshing the ARM64 index from the working official mirror, while preserving dpkg repair and no-recommends installation behavior.
+          - Adds /usr/lib/firefox-esr to Firefox's runtime library path so its RDD/media child processes can resolve bundled Firefox libraries.
+          - Prefers Firefox's matching libavcodec-extra ABI package over the basic libavcodec package when the ARM64 package is available.
+          - Applies the Firefox library-path migration to the existing Kali rootfs without resetting Kali, user files, or XFCE preferences.
 
-          Build and signing are verified in GitHub Actions. Actual Geany installation and Firefox YouTube video/audio playback still require confirmation on the target phone.
-          RELEASE_NOTES
-          )"
+          GitHub Actions verifies shell syntax, Kali migration self-tests, Kotlin tests, ARM64 APK build, and the permanent release signing certificate. Actual YouTube video/audio playback and App Store installs still require confirmation on the target phone; build success alone does not prove runtime playback.
+          RELEASE_NOTES          )"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "$FILE_NAME" --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$NOTES" --latest
