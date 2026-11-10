@@ -2854,13 +2854,750 @@ class LinuxRuntime(private val context: Context) {
         result
     }
 
+    /**
+     * Use the current official Kali mirror first, then its approved HTTPS fallback.
+     * Keep the working URI in DroidDesk's dedicated source for the following install.
+     */
+    private fun kaliAptMirrorFailoverScript(): String = """
+refresh_kali_indexes() {
+  local source_file="/etc/apt/sources.list.d/droiddesk-kali.sources"
+  local original_uri=""
+  local candidate=""
+  local update_log=""
+  local seen_uris=" "
+  local successful=0
+  if [[ ! -f "${'source_file" ]]; then
+    echo "[DroidDesk App Store] Missing DroidDesk Kali source file: $source_file"
+    return 1
+  fi
+  original_uri="$(sed -n 's/^URIs:[[:space:]]*//p' "$source_file" | head -n 1)"
+  case "$original_uri" in
+    "https://kali.download/kali/"|"https://archive.kali.org/kali/") ;;
+    *)
+      echo "[DroidDesk App Store] Refusing unapproved Kali source URI: $original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "$original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}source_file" ]]; then
+    echo "[DroidDesk App Store] Missing DroidDesk Kali source file: ${'source_file"
+    return 1
+  fi
+  original_uri="$(sed -n 's/^URIs:[[:space:]]*//p' "$source_file" | head -n 1)"
+  case "$original_uri" in
+    "https://kali.download/kali/"|"https://archive.kali.org/kali/") ;;
+    *)
+      echo "[DroidDesk App Store] Refusing unapproved Kali source URI: $original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "$original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}source_file"
+    return 1
+  fi
+  original_uri="${'(sed -n 's/^URIs:[[:space:]]*//p' "$source_file" | head -n 1)"
+  case "$original_uri" in
+    "https://kali.download/kali/"|"https://archive.kali.org/kali/") ;;
+    *)
+      echo "[DroidDesk App Store] Refusing unapproved Kali source URI: $original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "$original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}(sed -n 's/^URIs:[[:space:]]*//p' "${'source_file" | head -n 1)"
+  case "$original_uri" in
+    "https://kali.download/kali/"|"https://archive.kali.org/kali/") ;;
+    *)
+      echo "[DroidDesk App Store] Refusing unapproved Kali source URI: $original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "$original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}source_file" | head -n 1)"
+  case "${'original_uri" in
+    "https://kali.download/kali/"|"https://archive.kali.org/kali/") ;;
+    *)
+      echo "[DroidDesk App Store] Refusing unapproved Kali source URI: $original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "$original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}original_uri" in
+    "https://kali.download/kali/"|"https://archive.kali.org/kali/") ;;
+    *)
+      echo "[DroidDesk App Store] Refusing unapproved Kali source URI: ${'original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "$original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}original_uri"
+      return 1
+      ;;
+  esac
+  for candidate in "${'original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "$seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}original_uri" "https://kali.download/kali/" "https://archive.kali.org/kali/"; do
+    case "${'seen_uris" in *" $candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}seen_uris" in *" ${'candidate "*) continue ;; esac
+    seen_uris="$seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}candidate "*) continue ;; esac
+    seen_uris="${'seen_uris$candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}seen_uris${'candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: $candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}candidate "
+    echo "[DroidDesk App Store] Trying official Kali HTTPS repository: ${'candidate"
+    sed -i "s|^URIs:.*|URIs: $candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}candidate"
+    sed -i "s|^URIs:.*|URIs: ${'candidate|" "$source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}candidate|" "${'source_file"
+    update_log="$(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}source_file"
+    update_log="${'(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=$source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}(mktemp /tmp/droiddesk-kali-update.XXXXXX)"
+    if apt-get \
+      -o "Dir::Etc::sourcelist=${'source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "$update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}source_file" \
+      -o Dir::Etc::sourceparts=- \
+      -o APT::Get::List-Cleanup=0 \
+      -o Acquire::ForceIPv4=true \
+      -o Acquire::Retries=2 \
+      -o Acquire::http::Timeout=20 \
+      -o Acquire::https::Timeout=35 \
+      -o Acquire::https::Verify-Peer=true \
+      -o Acquire::https::Verify-Host=true \
+      -o Acquire::AllowInsecureRepositories=false \
+      -o Dpkg::Use-Pty=0 \
+      update 2>&1 | tee "${'update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}update_log"; then
+      if ! grep -Eq '^Err:[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "${'update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "$update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}update_log" &&
+         grep -Eq '^(Hit|Get):[0-9]+ https://(kali\.download|archive\.kali\.org)/kali([[:space:]]|/)' "${'update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: $candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}update_log" &&
+         find /var/lib/apt/lists -maxdepth 1 -type f -name '*binary-arm64_Packages*' -print -quit | grep -q .; then
+        echo "[DroidDesk App Store] Kali ARM64 repository is ready: ${'candidate"
+        successful=1
+        rm -f "$update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}candidate"
+        successful=1
+        rm -f "${'update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: $candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}update_log"
+        break
+      fi
+    fi
+    echo "[DroidDesk App Store] Repository did not provide a complete ARM64 index: ${'candidate"
+    rm -f "$update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}candidate"
+    rm -f "${'update_log"
+  done
+  if [[ "$successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}update_log"
+  done
+  if [[ "${'successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: $original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}successful" -eq 1 ]]; then return 0; fi
+  sed -i "s|^URIs:.*|URIs: ${'original_uri|" "$source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}original_uri|" "${'source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}}source_file"
+  echo "[DroidDesk App Store] Both approved Kali HTTPS repositories failed; restored the original URI."
+  return 1
+}
+""".trimIndent()
     private fun refreshKaliPackageIndexes(
         rootfs: File,
         force: Boolean = false,
         onProgress: (Double, String) -> Unit = { _, _ -> },
     ): Boolean = kaliAptTransactionLock.withLock {
         val listsDir = File(rootfs, "var/lib/apt/lists")
-        val hasPackageLists = listsDir.listFiles()?.any { it.isFile && it.name.contains("_Packages") } == true
+        val hasPackageLists = listsDir.listFiles()?.any { it.isFile && it.name.contains("binary-arm64") && it.name.contains("Packages") } == true
         val cacheDir = File(rootfs, "root/.cache/droiddesk").apply { mkdirs() }
         val stamp = File(cacheDir, "kali-package-index-updated")
         val attempt = File(cacheDir, "kali-package-index-attempt")
@@ -2880,15 +3617,9 @@ class LinuxRuntime(private val context: Context) {
             install -d -m 0755 /home/kali/.local/share/droiddesk
             exec > >(tee -a /home/kali/.local/share/droiddesk/package-store-install.log) 2>&1
             trap 'chmod 0644 /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true; chown kali:kali /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true' EXIT
+            ${kaliAptMirrorFailoverScript()}
             echo "[DroidDesk App Store] Refreshing Kali ARM64 package indexes..."
-            apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 \
-              -o Acquire::http::Timeout=25 -o Acquire::https::Timeout=45 \
-              -o Acquire::https::Verify-Peer=true -o Acquire::https::Verify-Host=true \
-              -o Dpkg::Use-Pty=0 update
-            if ! find /var/lib/apt/lists -maxdepth 1 -type f -name '*_Packages*' -print -quit | grep -q .; then
-              echo "APT update returned no package indexes."
-              exit 44
-            fi
+            refresh_kali_indexes
             chmod 0644 /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true
             chown kali:kali /home/kali/.local/share/droiddesk/package-store-install.log 2>/dev/null || true
         """.trimIndent()
@@ -3033,6 +3764,7 @@ class LinuxRuntime(private val context: Context) {
         val aptAction = if (alreadyInstalled) "install --only-upgrade" else "install"
         val script = """
             set -Eeuo pipefail
+            ${kaliAptMirrorFailoverScript()}
             native_arch="${'$'}(/usr/bin/dpkg --print-architecture)"
             if [ "${'$'}native_arch" != "arm64" ]; then
               echo "Refusing package transaction: Kali architecture is ${'$'}native_arch, expected arm64."
@@ -3131,7 +3863,7 @@ POLICY
               echo "[DroidDesk App Store] First install attempt failed; repairing dpkg and refreshing repositories before retry."
               run_package_heartbeat "resuming dpkg configuration" dpkg --configure -a || true
               run_package_heartbeat "repairing broken dependencies" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --fix-broken install -y --no-install-recommends
-              run_package_heartbeat "refreshing Kali ARM64 indexes before retry" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" update
+              refresh_kali_indexes
               run_package_heartbeat "retrying ${'$'}package_name installation" env DEBIAN_FRONTEND=noninteractive apt-get "${'$'}{apt_options[@]}" --no-install-recommends ${aptAction} -y "${'$'}package_spec"
             fi
             if dpkg --audit | grep -q .; then
