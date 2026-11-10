@@ -456,7 +456,7 @@ jobs:
               missing.append('explain AMD64 versus ARM64 and list repository alternatives')
           if "static const repo = 'ah92j/DroidDesk-GIO-Fix';" not in update_service:
               missing.append('updater must check releases from the APK publishing repository')
-          if "libavcodec\\.so\\.\\(" not in desktop_experience_script or "if ($2 == wanted) found=1" not in desktop_experience_script:
+          if "libavcodec\\.so\\.\\(" not in desktop_experience_script or 'if ($2 == wanted || $2 == "all") found=1' not in desktop_experience_script:
               missing.append('detect Firefox FFmpeg ABI and ARM64 package architecture correctly')
           if "val newVersion = line.substringAfter('/').trim().substringBefore(' ')" not in runtime:
               missing.append('display package version rather than architecture in the Updates tab')
@@ -548,7 +548,7 @@ jobs:
               missing.append('support both ARM64 FFmpeg codec package names')
           if 'user_pref("media.rdd-process.enabled", true);' not in desktop_experience_script:
               missing.append('apply Firefox PRoot software-decoder fallback')
-          if 'Open Add applications > Featured or Browse' not in desktop_experience_script:
+          if 'Open Add applications > Browse or Featured' not in desktop_experience_script:
               missing.append('guide users away from incompatible AMD64 downloads')
 
           if 'android.permission.QUERY_ALL_PACKAGES' in manifest:
