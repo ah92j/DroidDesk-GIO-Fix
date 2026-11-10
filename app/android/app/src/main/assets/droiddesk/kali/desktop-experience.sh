@@ -187,7 +187,10 @@ fi
 # Fall back to the ABI exposed by the system FFmpeg libraries when recommendations are absent.
 codec_recommendations="$(apt-cache depends firefox-esr 2>/dev/null |
   sed -nE 's/.*(libavcodec(-extra)?[0-9]+).*/\1/p' | sort -u)
-codec_candidate="$(printf '%s\n' "$codec_recommendations" | grep -E '^libavcodec-extra[0-9]+
+codec_candidate="$(printf '%s\n' "$codec_recommendations" | grep -E '^libavcodec-extra[0-9]+$' | head -n1 || true)"
+if [[ -z "$codec_candidate" ]]; then
+  codec_candidate="$(printf '%s\n' "$codec_recommendations" | grep -E '^libavcodec[0-9]+$' | head -n1 || true)"
+fi
 codec_abi="$(ldconfig -p 2>/dev/null |
   sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
   sort -rn | head -n1)"
