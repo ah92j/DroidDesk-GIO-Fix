@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v9"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v10"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 
@@ -22,9 +22,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-all' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v9" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v10" ]]
   grep -Fq 'codec_package="libavcodec-extra$codec_abi"' "$0"
   grep -q "media.rdd-ffmpeg.enabled" "$0"
+  grep -q 'user_pref("media.rdd-process.enabled", true);' "$0"
+  grep -q 'user_pref("media.rdd-ffmpeg.enabled", true);' "$0"
   grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
   grep -q "Preserve existing XFCE preferences" "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
@@ -104,28 +106,39 @@ fi
 # Firefox's FFmpeg backend must find the matching ARM64 codec ABI. Kali Rolling
 # currently publishes ABI 62 and 63; detect the available package instead of
 # assuming one fixed FFmpeg generation or downloading an x86_64 codec library.
-codec_abi="$(ldconfig -p 2>/dev/null |
-  sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
-  sort -rn | head -n1)"
-if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
-  codec_package=""
-  for candidate in "libavcodec-extra$codec_abi" "libavcodec$codec_abi"; do
-    if apt-cache show "$candidate" 2>/dev/null |
-       awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted) found=1 } END { exit !found }'; then
-      codec_package="$candidate"
-      break
-    fi
-  done
-  if [[ -n "$codec_package" ]]; then
-    echo "[Kali Linux] Installing the matching ARM64 Firefox FFmpeg ABI package: $codec_package"
-    apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
-      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
-      install -y --no-install-recommends "$codec_package"
-  else
-    echo "[Kali Linux] No ARM64 libavcodec package exists for ABI $codec_abi; bundled VP9/Opus decoders remain enabled."
+# Use the codec package recommended by this exact Firefox ESR package first.
+# Fall back to the installed FFmpeg SONAME for Kali builds with empty recommendation metadata.
+mapfile -t codec_candidates < <(
+  apt-cache depends firefox-esr 2>/dev/null |
+    grep -E 'Recommends:|^[[:space:]]+or ' |
+    grep -oE 'libavcodec(-extra)?[0-9]+' |
+    awk '!seen[$0]++'
+)
+if ((${#codec_candidates[@]} == 0)); then
+  codec_abi="$(ldconfig -p 2>/dev/null |
+    sed -n 's/^[[:space:]]*libavcodec\.so\.\([0-9][0-9]*\) .*/\1/p' |
+    sort -rn | head -n1)
+  if [[ "$codec_abi" =~ ^[0-9]+$ ]]; then
+    codec_candidates=("libavcodec-extra$codec_abi" "libavcodec$codec_abi")
   fi
+fi
+codec_package=""
+for candidate in "${codec_candidates[@]}"; do
+  if apt-cache show "$candidate" 2>/dev/null |
+     awk -v wanted="arm64" '/^Architecture:/ { if ($2 == wanted || $2 == "all") found=1 } END { exit !found }'; then
+    codec_package="$candidate"
+    break
+  fi
+done
+if [[ -n "$codec_package" ]]; then
+  echo "[Kali Linux] Installing Firefox ESR recommended ARM64 codec package: $codec_package"
+  apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+    install -y --no-install-recommends "$codec_package"
+  ldconfig 2>/dev/null || true
 else
-  echo "[Kali Linux] Could not detect the installed libavcodec ABI; bundled VP9/Opus decoders remain enabled."
+  echo "[Kali Linux] No ARM64 FFmpeg codec package from Firefox ESR recommendations was found."
+  echo "[Kali Linux] Firefox VP9/Opus software decoding remains enabled; H.264/AAC may be unavailable without the matching codec package."
 fi
 
 # Install Google Chrome ARM64 from Google's signed repository first.
@@ -234,6 +247,10 @@ export MOZ_DISABLE_RDD_SANDBOX=1
 export MOZ_DISABLE_GMP_SANDBOX=1
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
+if command -v pactl >/dev/null 2>&1 && pactl info >/dev/null 2>&1; then
+  pactl set-default-sink droiddesk_android >/dev/null 2>&1 || true
+  pactl set-sink-mute droiddesk_android 0 >/dev/null 2>&1 || true
+fi
 firefox_bin="$(command -v firefox-esr || command -v firefox || true)"
 if [[ -z "$firefox_bin" ]]; then
   zenity --error --title='Kali Linux' --text='Firefox ESR is not installed.' 2>/dev/null || true
@@ -261,8 +278,8 @@ FIREFOX_DESKTOP
   chmod 0755 /home/kali/.local/share/applications/droiddesk-firefox.desktop /home/kali/Desktop/Firefox.desktop
 fi
 
-# Android PRoot cannot reliably start Firefox's separate RDD media process.
-# Route software decoding through Firefox's content process; keep GPU/VA-API off.
+# Keep Firefox's isolated RDD media process enabled. Disabling RDD can remove the normal
+# external decoder path for H.264/AAC on some Firefox ESR builds. Hardware/VA-API stays off.
 for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
   pref_dir="$firefox_root/defaults/pref"
   if [[ -d "$pref_dir" ]]; then
@@ -270,9 +287,9 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox; do
 pref("media.cubeb.sandbox", false);
 pref("media.cubeb.backend", "pulse");
 pref("media.ffmpeg.enabled", true);
-pref("media.rdd-ffmpeg.enabled", false);
+pref("media.rdd-ffmpeg.enabled", true);
 pref("media.ffvpx.enabled", true);
-pref("media.rdd-process.enabled", false);
+pref("media.rdd-process.enabled", true);
 pref("media.av1.enabled", false);
 pref("media.ffmpeg.vaapi.enabled", false);
 pref("media.hardware-video-decoding.enabled", false);
@@ -303,12 +320,12 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
 user_pref("media.cubeb.sandbox", false);
 user_pref("media.cubeb.backend", "pulse");
 user_pref("media.ffmpeg.enabled", true);
-user_pref("media.rdd-ffmpeg.enabled", false);
+user_pref("media.rdd-ffmpeg.enabled", true);
 user_pref("media.ffvpx.enabled", true);
 user_pref("media.av1.enabled", false);
 user_pref("media.ffmpeg.vaapi.enabled", false);
 user_pref("media.hardware-video-decoding.enabled", false);
-user_pref("media.rdd-process.enabled", false);
+user_pref("media.rdd-process.enabled", true);
 user_pref("media.mediasource.enabled", true);
 user_pref("media.mediasource.webm.enabled", true);
 user_pref("media.mediasource.webm.audio.enabled", true);
@@ -349,6 +366,11 @@ diagnostic_file="$diagnostic_dir/firefox-media-diagnostic.txt"
   grep -hE 'media\.(rdd-process|rdd-ffmpeg|ffvpx|ffmpeg|mediasource|webm|av1)' \
     /usr/lib/firefox-esr/defaults/pref/droiddesk-media.js \
     /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
+  echo "=== PulseAudio bridge ==="
+  pactl info 2>&1 || true
+  pactl list short sinks 2>&1 || true
+  echo "=== Firefox ESR codec recommendations ==="
+  apt-cache depends firefox-esr 2>&1 | grep -E 'Recommends:|^[[:space:]]+or ' | grep -E 'libavcodec|pulseaudio' || true
 } > "$diagnostic_file"
 chmod 0644 "$diagnostic_file"
 
@@ -480,7 +502,7 @@ case "$lower_file" in
           package_spec="$deb_name"
           if [[ "$candidate_arch" == "arm64" ]]; then package_spec="$deb_name:arm64"; fi
           echo "[DroidDesk Installer] Installing compatible repository package $package_spec."
-          if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$package_spec"; then
+          if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --install-recommends install -y "$package_spec"; then
             package_status="$(dpkg-query -W -f='${Status}' "$deb_name" 2>/dev/null || true)"
             if [[ "$package_status" == "install ok installed" ]]; then
               sudo -n update-desktop-database /usr/share/applications 2>/dev/null || true
@@ -490,11 +512,17 @@ case "$lower_file" in
           fi
         fi
       fi
-      show_failure "This download is $deb_arch, but Kali requires $host_arch.
-I checked the configured Kali repositories for an ARM64 replacement of $deb_name.
-No compatible ARM64 package was found, so the AMD64 file was not installed.
-Open Add applications > Featured or Browse to install a compatible package from Kali's ARM64 repositories.
-If this application is not listed there, its publisher may not provide an ARM64 Linux build."
+      related_candidates="$(apt-cache search --names-only "$deb_name" 2>/dev/null | head -n 8 || true)"
+      echo "[DroidDesk Installer] Related Kali ARM64 repository matches:"
+      printf '%s\n' "$related_candidates"
+      show_failure "Wrong package architecture.
+Package: $deb_arch
+Kali system: $host_arch
+This file is an AMD64 build and cannot execute as an ARM64 Linux program.
+I checked Kali's repositories for an ARM64 build of $deb_name, but none was available under that package name.
+Related repository matches are listed in package-install.log.
+Open Add applications > Browse or Featured for compatible ARM64 alternatives.
+If the publisher does not provide an ARM64 build, this exact download cannot be installed on this phone."
       exit 3
     fi
 
@@ -510,7 +538,7 @@ If this application is not listed there, its publisher may not provide an ARM64 
     fi
 
     install_ok=0
-    if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install -y "$file"; then
+    if sudo -n apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --install-recommends install -y "$file"; then
       install_ok=1
     else
       echo "[DroidDesk Installer] APT local-file install failed; trying dpkg followed by dependency repair."
