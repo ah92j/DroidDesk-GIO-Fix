@@ -672,6 +672,25 @@ public class LorieView extends SurfaceView implements InputStub {
         updateViewport();
     }
 
+    /**
+     * Reattach the current Android Surface after the app returns from the background.
+     * Android may keep the Surface object valid while the native rendering target was
+     * paused or recreated. Rebinding here refreshes the X11 renderer without restarting
+     * the Linux desktop session.
+     */
+    public void refreshSurfaceForResume() {
+        Surface surface = getHolder().getSurface();
+        if (surface == null || !surface.isValid()) {
+            Log.w("LorieView", "Skipping resume refresh because the Surface is not valid");
+            return;
+        }
+        surfaceChanged(surface);
+        updateViewport();
+        requestFocus();
+        invalidate();
+        Log.i("LorieView", "Native X11 Surface refreshed after Android resume");
+    }
+
     void getDimensionsFromSettings(int width, int height) {
         Prefs prefs = MainActivity.getPrefs();
         int w = width;

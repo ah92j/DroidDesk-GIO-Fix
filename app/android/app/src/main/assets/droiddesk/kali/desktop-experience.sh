@@ -7,7 +7,7 @@ export LANG=C.UTF-8 TERM=dumb DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none BASH_ENV=/dev/null
 
 readonly FEATURE_DIR="/root/.droiddesk"
-readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v18"
+readonly FEATURE_MARKER="$FEATURE_DIR/desktop-experience-v19"
 readonly LOG_FILE="$FEATURE_DIR/desktop-experience.log"
 readonly WALLPAPER_DIR="/usr/share/xfce4/backdrops/Kali Linux"
 readonly FIREFOX_155_VERSION="155.0.1"
@@ -17,7 +17,7 @@ readonly MOZILLA_RELEASE_PRIMARY_FINGERPRINT="14F26682D0916CDD81E37B6D61B7B526D9
 readonly MOZILLA_RELEASE_SIGNING_FINGERPRINT="827E658608679618CD349F93678E455D76767AA3"
 
 REQUIRED_PACKAGES=(
-  kali-wallpapers-2026 firefox-esr libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
+  kali-wallpapers-2026 firefox-esr xfce4 libpulse0 gvfs gvfs-daemons gvfs-backends pulseaudio-utils libasound2-plugins
   ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good
   gdebi zenity desktop-file-utils xdg-utils curl gnupg file tar xz-utils
 )
@@ -27,7 +27,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gvfs-daemons' "$0"
   grep -q 'kali-cubes2-16x9.jpg' "$0"
   grep -q 'kali-wallpapers-2026' "$0"
-  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v18" ]]
+  [[ "$FEATURE_MARKER" == "/root/.droiddesk/desktop-experience-v19" ]]
   grep -q 'FIREFOX_155_VERSION="155.0.1"' "$0"
   grep -q 'install_firefox_155()' "$0"
   grep -q 'linux-aarch64/en-US/firefox-155.0.1.tar.xz' "$0"
@@ -67,6 +67,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q 'gfx.webrender.software' "$0"
   grep -q 'layers.acceleration.disabled' "$0"
   grep -q "launch-time diagnostics" "$0"
+  grep -q "profile_is_newer_than_binary" "$0"
+  grep -q "X-XFCE-Category=WebBrowser" "$0"
+  grep -q "WebBrowser=droiddesk-browser" "$0"
+  grep -q "x-scheme-handler/http" "$0"
+  grep -q "DROIDDESK_FORCE_FIREFOX_155_REINSTALL" "$0"
+  grep -q "rm -f /home/kali/Desktop/Firefox-Media-Diagnostic.txt" "$0"
   grep -q "kali-wallpapers-2026" "$0"
   ! grep -Eq '(^|[[:space:]])--install-recommends([[:space:]]|$)' "$0"
   printf '%s\n' "[Kali Linux] Desktop-experience checks passed."
@@ -89,7 +95,7 @@ install_firefox_155() {
   local temp_dir keyring archive key_fingerprints verify_status expected_checksum actual_checksum
   local extract_dir candidate staged_dir backup_dir version_output dependencies
 
-  if [[ -x "$FIREFOX_155_INSTALL_DIR/firefox" ]]; then
+  if [[ "${DROIDDESK_FORCE_FIREFOX_155_REINSTALL:-0}" != "1" && -x "$FIREFOX_155_INSTALL_DIR/firefox" ]]; then
     version_output="$("$FIREFOX_155_INSTALL_DIR/firefox" --version 2>/dev/null || true)"
     if [[ "$version_output" == "Mozilla Firefox $FIREFOX_155_VERSION" ]]; then
       printf '%s\n' "$FIREFOX_155_VERSION" > "$FIREFOX_155_INSTALL_DIR/.droiddesk-managed-version"
@@ -334,6 +340,15 @@ for package in "${REQUIRED_PACKAGES[@]}"; do
   fi
 done
 
+echo "[Kali Linux] Upgrading the official Kali Rolling XFCE package set..."
+run_with_package_heartbeat "upgrading XFCE from the official Kali ARM64 repository" \
+  env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --no-install-recommends install -y xfce4
+xfce_version="$(xfce4-session --version 2>&1 | head -n 1 || true)"
+echo "[Kali Linux] Installed XFCE session version: ${xfce_version:-version unavailable}"
+if [[ "$xfce_version" != *"4.20"* ]]; then
+  echo "[Kali Linux] NOTICE: the current Kali Rolling repository provides a different XFCE release; keeping its signed repository version."
+fi
+
 # Preserve custom wallpaper, panel/dock settings and desktop icon positions on upgrade.
 PRESERVE_DIR="$(mktemp -d /tmp/droiddesk-xfce-preserve.XXXXXX)"
 PRESERVE_ARCHIVE="$PRESERVE_DIR/user-xfce-settings.tar"
@@ -383,7 +398,7 @@ fi
 
 # Ensure Firefox exists without forcing a reinstall or pulling optional recommendations.
 echo "[Kali Linux] Ensuring Firefox ESR is configured for ARM64..."
-run_with_package_heartbeat "installing or verifying Firefox ESR" env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --no-install-recommends install -y firefox-esr
+run_with_package_heartbeat "refreshing the Kali Firefox ESR ARM64 package" env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" --no-install-recommends --reinstall install -y firefox-esr
 if ! package_installed firefox-esr; then
   echo "[Kali Linux] Firefox ESR is not configured after package recovery."
   exit 22
@@ -474,8 +489,8 @@ else
 fi
 # Install the official Mozilla Firefox 155.0.1 ARM64 browser beside Kali ESR.
 # This is a playback test candidate; the packaged Firefox ESR remains installed for rollback.
-if ! install_firefox_155; then
-  echo "[DroidDesk Firefox] WARNING: Firefox 155.0.1 was not installed; Kali Firefox ESR remains available."
+if ! DROIDDESK_FORCE_FIREFOX_155_REINSTALL=1 install_firefox_155; then
+  echo "[DroidDesk Firefox] WARNING: Firefox 155.0.1 refresh failed; the last verified installation and Kali Firefox ESR remain available."
 fi
 
 # Install Google Chrome ARM64 from Google's signed repository first.
@@ -512,11 +527,12 @@ install -d -m 0755 /home/kali/.config/xfce4 /home/kali/.local/bin /home/kali/.lo
 cat > /home/kali/.local/bin/droiddesk-browser <<'BROWSER'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -x /home/kali/.local/bin/droiddesk-firefox ]]; then
+  if /home/kali/.local/bin/droiddesk-firefox "$@"; then exit 0; fi
+  echo "[DroidDesk Browser] Firefox launch failed; trying the next ARM64 browser." >&2
+fi
 if [[ -x /usr/bin/google-chrome-stable ]]; then
   exec /usr/bin/google-chrome-stable --no-sandbox --disable-dev-shm-usage --ozone-platform=x11 "$@"
-fi
-if [[ -x /home/kali/.local/bin/droiddesk-firefox ]]; then
-  exec /home/kali/.local/bin/droiddesk-firefox "$@"
 fi
 if [[ -x /usr/bin/chromium ]]; then
   exec /usr/bin/chromium "$@"
@@ -538,7 +554,31 @@ StartupNotify=true
 Categories=Network;WebBrowser;
 BROWSER_DESKTOP
 chmod 0644 /home/kali/.local/share/applications/droiddesk-browser.desktop
-printf '%s\n' 'FileManager=Thunar' 'WebBrowser=droiddesk-browser.desktop' > /home/kali/.config/xfce4/helpers.rc
+install -d -m 0755 /home/kali/.local/share/xfce4/helpers
+cat > /home/kali/.local/share/xfce4/helpers/droiddesk-browser.desktop <<'BROWSER_HELPER'
+[Desktop Entry]
+NoDisplay=true
+Version=1.0
+Encoding=UTF-8
+Type=X-XFCE-Helper
+X-XFCE-Category=WebBrowser
+X-XFCE-Commands=/home/kali/.local/bin/droiddesk-browser
+X-XFCE-CommandsWithParameter=/home/kali/.local/bin/droiddesk-browser "%s"
+Icon=web-browser
+Name=Kali Linux Web Browser
+BROWSER_HELPER
+chmod 0644 /home/kali/.local/share/xfce4/helpers/droiddesk-browser.desktop
+helpers_file="/home/kali/.config/xfce4/helpers.rc"
+install -d -m 0755 /home/kali/.config/xfce4
+touch "$helpers_file"
+if ! grep -q '^FileManager=' "$helpers_file"; then printf '%s\n' 'FileManager=Thunar' >> "$helpers_file"; fi
+sed -i '/^WebBrowser=/d' "$helpers_file"
+printf '%s\n' 'WebBrowser=droiddesk-browser' >> "$helpers_file"
+export HOME=/home/kali XDG_CONFIG_HOME=/home/kali/.config XDG_DATA_HOME=/home/kali/.local/share
+for mime_type in x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml; do
+  xdg-mime default droiddesk-browser.desktop "$mime_type" || true
+done
+update-desktop-database /home/kali/.local/share/applications >/dev/null 2>&1 || true
 
 # Replace the saved browser launcher used by the existing bottom dock.
 install -d -m 0755 /home/kali/.config/xfce4/panel/launcher-23
@@ -586,19 +626,48 @@ export MOZ_DISABLE_GMP_SANDBOX=1
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
 firefox_155_home="/opt/droiddesk-firefox-155.0.1"
-firefox_155_profile="/home/kali/.mozilla/firefox/droiddesk-firefox-155"
 firefox_profile=""
+
+profile_is_newer_than_binary() {
+  local profile_dir="$1" binary_version="$2" recorded_version latest_version
+  [[ -s "$profile_dir/compatibility.ini" ]] || return 1
+  recorded_version="$(sed -nE 's/^LastVersion=([0-9]+([.][0-9]+)*).*/\1/p' "$profile_dir/compatibility.ini" | head -n 1)"
+  [[ -n "$recorded_version" ]] || return 1
+  latest_version="$(printf '%s\n%s\n' "$binary_version" "$recorded_version" | sort -V | tail -n 1)"
+  [[ "$latest_version" == "$recorded_version" && "$recorded_version" != "$binary_version" ]]
+}
+choose_firefox_profile() {
+  local requested="$1" binary_version="$2" selected="$1" base="$1" suffix=2
+  if profile_is_newer_than_binary "$requested" "$binary_version"; then
+    selected="${requested}-safe"
+    while [[ -e "$selected" ]]; do
+      selected="${base}-safe-${suffix}"
+      suffix=$((suffix + 1))
+    done
+    echo "[DroidDesk Firefox] Existing profile was last used by newer Firefox; preserving it and using $selected." >&2
+  fi
+  install -d -m 0700 "$selected"
+  chown kali:kali "$selected" 2>/dev/null || true
+  printf '%s\n' "$selected"
+}
 if [[ -x "$firefox_155_home/firefox" ]]; then
   firefox_bin="$firefox_155_home/firefox"
-  firefox_profile="$firefox_155_profile"
   export LD_LIBRARY_PATH="$firefox_155_home"
-  install -d -m 0700 "$firefox_profile"
-  chown kali:kali "$firefox_profile" 2>/dev/null || true
-  echo "[DroidDesk Firefox] Using official Mozilla Firefox 155.0.1 ARM64 with an isolated profile."
+  firefox_version="$("$firefox_bin" --version 2>/dev/null | sed -nE 's/.*Firefox ([0-9]+([.][0-9]+)*).*/\1/p' | head -n 1)"
+  if [[ -n "$firefox_version" ]]; then
+    firefox_profile="$(choose_firefox_profile "/home/kali/.mozilla/firefox/droiddesk-firefox-155" "$firefox_version")"
+  fi
+  echo "[DroidDesk Firefox] Selected the verified Mozilla ARM64 installation."
 else
   firefox_bin="$(command -v firefox-esr || command -v firefox || true)"
   export LD_LIBRARY_PATH="/usr/lib/firefox-esr"
-  echo "[DroidDesk Firefox] Firefox 155.0.1 is not installed; using Kali Firefox ESR fallback."
+  if [[ -n "$firefox_bin" && -x "$firefox_bin" ]]; then
+    firefox_version="$("$firefox_bin" --version 2>/dev/null | sed -nE 's/.*Firefox ([0-9]+([.][0-9]+)*).*/\1/p' | head -n 1)"
+    if [[ -n "$firefox_version" ]]; then
+      firefox_profile="$(choose_firefox_profile "/home/kali/.mozilla/firefox/droiddesk-firefox-esr" "$firefox_version")"
+    fi
+  fi
+  echo "[DroidDesk Firefox] Firefox 155.0.1 is unavailable; using the separate Kali Firefox ESR profile."
 fi
 pulse_ready=0
 if command -v pactl >/dev/null 2>&1; then
@@ -638,6 +707,7 @@ install -d -m 0755 "$(dirname "$firefox_log")"
   fi
 } >> "$firefox_log" 2>&1
 diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
+rm -f /home/kali/Desktop/Firefox-Media-Diagnostic.txt
 {
   echo "=== Firefox launch-time diagnostics $(date -Is) ==="
   echo "Selected Firefox binary: $firefox_bin"
@@ -668,15 +738,11 @@ diagnostic_file="/home/kali/.local/share/droiddesk/firefox-media-diagnostic.txt"
     /home/kali/.mozilla/firefox/*/user.js 2>/dev/null || true
 } > "$diagnostic_file" 2>&1
 chmod 0644 "$diagnostic_file" 2>/dev/null || true
-install -d -m 0755 /home/kali/Desktop
-cp -f "$diagnostic_file" /home/kali/Desktop/Firefox-Media-Diagnostic.txt
-chmod 0644 /home/kali/Desktop/Firefox-Media-Diagnostic.txt
-chown kali:kali /home/kali/Desktop/Firefox-Media-Diagnostic.txt 2>/dev/null || true
 
 echo "[DroidDesk Audio] Firefox launch diagnostics: $firefox_log"
 echo "[DroidDesk Media] Fresh media diagnostics: $diagnostic_file"
 if [[ -n "$firefox_profile" ]]; then
-  exec "$firefox_bin" --no-remote --profile "$firefox_profile" "$@" >> "$firefox_log" 2>&1
+  exec "$firefox_bin" --profile "$firefox_profile" "$@" >> "$firefox_log" 2>&1
 fi
 exec "$firefox_bin" "$@" >> "$firefox_log" 2>&1
 FIREFOX
@@ -790,6 +856,8 @@ FIREFOX_USER_PREFS
   done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
 fi
 
+# Keep diagnostics hidden in application data; remove the former Desktop report.
+rm -f /home/kali/Desktop/Firefox-Media-Diagnostic.txt
 # Record the actual Firefox/FFmpeg package and codec state for future diagnosis.
 diagnostic_dir="/home/kali/.local/share/droiddesk"
 install -d -m 0755 "$diagnostic_dir"

@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v23"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v24"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -130,22 +130,110 @@ object XfceMobileProfile {
      */
     private fun installFileManagerDefaults(homeDir: File) {
         val configDir = File(homeDir, ".config/xfce4").apply { mkdirs() }
-        val mimeApps = File(homeDir, ".config/mimeapps.list")
-        if (!mimeApps.isFile || mimeApps.length() == 0L) {
-            mimeApps.parentFile?.mkdirs()
-            mimeApps.writeText(
-                "[Default Applications]\n" +
-                    "inode/directory=thunar.desktop;\n" +
-                    "application/x-gnome-saved-search=thunar.desktop;\n",
-            )
-        }
+        val appDir = File(homeDir, ".local/share/applications").apply { mkdirs() }
+        val helperDir = File(homeDir, ".local/share/xfce4/helpers").apply { mkdirs() }
+        val browser = File(homeDir, ".local/bin/droiddesk-browser")
+        browser.parentFile?.mkdirs()
+        browser.writeText(
+            """
+            #!/bin/sh
+            if [ -x /home/kali/.local/bin/droiddesk-firefox ]; then
+              if /home/kali/.local/bin/droiddesk-firefox "$@"; then exit 0; fi
+            fi
+            if [ -x /usr/bin/google-chrome-stable ]; then
+              exec /usr/bin/google-chrome-stable --no-sandbox --disable-dev-shm-usage --ozone-platform=x11 "$@"
+            fi
+            if [ -x /usr/bin/chromium ]; then exec /usr/bin/chromium "$@"; fi
+            exit 127
+            """.trimIndent() + "\n",
+        )
+        browser.setExecutable(true, false)
+
+        File(appDir, "droiddesk-browser.desktop").writeText(
+            """
+            [Desktop Entry]
+            Version=1.0
+            Type=Application
+            Name=Web Browser
+            Comment=Open the installed Kali browser
+            Exec=/home/kali/.local/bin/droiddesk-browser %U
+            TryExec=/home/kali/.local/bin/droiddesk-browser
+            Icon=web-browser
+            Terminal=false
+            StartupNotify=true
+            Categories=Network;WebBrowser;
+            MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;
+            """.trimIndent() + "\n",
+        )
+        File(helperDir, "droiddesk-browser.desktop").writeText(
+            """
+            [Desktop Entry]
+            NoDisplay=true
+            Version=1.0
+            Encoding=UTF-8
+            Type=X-XFCE-Helper
+            X-XFCE-Category=WebBrowser
+            X-XFCE-Commands=/home/kali/.local/bin/droiddesk-browser
+            X-XFCE-CommandsWithParameter=/home/kali/.local/bin/droiddesk-browser "%s"
+            Icon=web-browser
+            Name=Kali Linux Web Browser
+            """.trimIndent() + "\n",
+        )
 
         val helpers = File(configDir, "helpers.rc")
         val helperLines = if (helpers.isFile) helpers.readLines().toMutableList() else mutableListOf()
         if (helperLines.none { it.startsWith("FileManager=") }) helperLines += "FileManager=Thunar"
-        if (helperLines.none { it.startsWith("WebBrowser=") }) helperLines += "WebBrowser=droiddesk-browser.desktop"
-        helpers.writeText(helperLines.joinToString("\n", postfix = "\n"))
-        Log.i(TAG, "Added only missing Thunar and browser defaults without replacing user handlers")
+        val withoutOldBrowser = helperLines.filterNot { it.startsWith("WebBrowser=") }
+        helpers.writeText((withoutOldBrowser + "WebBrowser=droiddesk-browser").joinToString("\n", postfix = "\n"))
+
+        updateDefaultMimeAssociations(
+            File(homeDir, ".config/mimeapps.list"),
+            linkedMapOf(
+                "x-scheme-handler/http" to "droiddesk-browser.desktop;",
+                "x-scheme-handler/https" to "droiddesk-browser.desktop;",
+                "text/html" to "droiddesk-browser.desktop;",
+                "application/xhtml+xml" to "droiddesk-browser.desktop;",
+            ),
+        )
+        Log.i(TAG, "Installed the XFCE WebBrowser helper and HTTP/HTTPS defaults; preserved Thunar directory handling")
+    }
+
+    private fun updateDefaultMimeAssociations(file: File, defaults: Map<String, String>) {
+        val source = if (file.isFile) file.readLines() else emptyList()
+        val output = mutableListOf<String>()
+        var inDefaultSection = false
+        var foundDefaultSection = false
+        var insertedDefaults = false
+
+        fun appendDefaults() {
+            if (insertedDefaults) return
+            defaults.forEach { (mimeType, desktopFile) -> output += "$mimeType=$desktopFile" }
+            insertedDefaults = true
+        }
+
+        source.forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                if (inDefaultSection) appendDefaults()
+                inDefaultSection = trimmed == "[Default Applications]"
+                if (inDefaultSection) foundDefaultSection = true
+                output += line
+            } else if (inDefaultSection && defaults.containsKey(line.substringBefore("=").trim())) {
+                // Replace only managed browser entries; leave unrelated user MIME choices intact.
+            } else {
+                output += line
+            }
+        }
+
+        if (inDefaultSection) appendDefaults()
+        if (!foundDefaultSection) {
+            if (output.isNotEmpty() && output.last().isNotBlank()) output += ""
+            output += "[Default Applications]"
+            appendDefaults()
+        }
+
+        file.parentFile?.mkdirs()
+        file.writeText(output.joinToString("\n", postfix = "\n"))
     }
     private fun installPanelCss(homeDir: File) {
         val cssFile = File(homeDir, ".config/gtk-3.0/gtk.css")

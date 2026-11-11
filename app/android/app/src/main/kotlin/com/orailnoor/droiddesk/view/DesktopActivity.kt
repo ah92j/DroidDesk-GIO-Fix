@@ -184,18 +184,38 @@ class DesktopActivity : Activity() {
         x11ReconnectHandler.removeCallbacks(x11ReconnectRunnable)
         x11ReconnectAttempts = 0
         enableImmersiveMode()
-        if (isSetupDone && lorieView?.holder?.surface?.isValid == true) {
-            Log.i(TAG, "DesktopActivity resumed; resetting the native Lorie socket before reconnecting")
-            releaseX11ConnectionForBackground()
-            connectToX11ServiceIfNeeded()
-            x11ReconnectHandler.postDelayed(x11ReconnectRunnable, 450L)
-            lorieView?.postDelayed({
-                if (activityResumed && lorieView?.holder?.surface?.isValid == true) {
-                    lorieView?.triggerCallback()
-                    lorieView?.invalidate()
-                    Log.i(TAG, "LorieView viewport refreshed after Android resume")
+
+        if (isSetupDone) {
+            val view = lorieView
+            if (view?.holder?.surface?.isValid == true) {
+                val nativeClientIsLive =
+                    LorieView.connected() && X11ServiceClient.connectedServerPid > 0
+                if (!nativeClientIsLive) {
+                    Log.w(TAG, "Desktop resumed without a live X11 client; reconnecting without restarting XFCE")
+                    connectToX11ServiceIfNeeded()
+                } else {
+                    // Keep a healthy Binder/native connection. Disconnecting it on every
+                    // onResume can race the Surface renderer and leave a black X11 frame.
+                    Log.i(TAG, "Desktop resumed with a live X11 client; preserving the existing connection")
+                    view.postDelayed({
+                        if (activityResumed && !isFinishing && !isDestroyed &&
+                            view.holder.surface?.isValid == true
+                        ) {
+                            view.refreshSurfaceForResume()
+                            if (!LorieView.connected()) {
+                                Log.w(TAG, "X11 client dropped during Surface refresh; reconnecting")
+                                releaseX11ConnectionForBackground()
+                                connectToX11ServiceIfNeeded()
+                                scheduleX11Reconnect("native X11 client dropped during resume refresh")
+                            } else {
+                                view.invalidate()
+                                view.requestFocus()
+                                Log.i(TAG, "Existing X11 Surface and desktop frame restored after Android resume")
+                            }
+                        }
+                    }, 350L)
                 }
-            }, 900L)
+            }
         }
         restartSessionIfStopped()
     }

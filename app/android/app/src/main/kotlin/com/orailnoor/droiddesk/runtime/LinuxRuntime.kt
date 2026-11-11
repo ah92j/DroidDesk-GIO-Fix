@@ -863,7 +863,7 @@ class LinuxRuntime(private val context: Context) {
     }
 
     /**
-     * Retry the XFCE Applications menu independently from desktop-experience-v18.
+     * Retry the XFCE Applications menu independently from desktop-experience-v19.
      * Older builds could mark v17 complete while the D-Bus session was not ready.
      */
     private fun ensureKaliApplicationsMenu(rootfs: File): Boolean {
@@ -974,7 +974,7 @@ class LinuxRuntime(private val context: Context) {
     }
 
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v18")
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v19")
         if (completionMarker.isFile) return ensureKaliFirefox155(rootfs)
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
@@ -1014,7 +1014,7 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v18").isFile && ensureKaliFirefox155(rootfs)
+                File(rootfs, "root/.droiddesk/desktop-experience-v19").isFile && ensureKaliFirefox155(rootfs)
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
