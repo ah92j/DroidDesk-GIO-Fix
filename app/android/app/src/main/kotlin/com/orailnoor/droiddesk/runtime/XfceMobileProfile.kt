@@ -189,6 +189,8 @@ object XfceMobileProfile {
         updateDefaultMimeAssociations(
             File(homeDir, ".config/mimeapps.list"),
             linkedMapOf(
+                "inode/directory" to "thunar.desktop;",
+                "application/x-gnome-saved-search" to "thunar.desktop;",
                 "x-scheme-handler/http" to "droiddesk-browser.desktop;",
                 "x-scheme-handler/https" to "droiddesk-browser.desktop;",
                 "text/html" to "droiddesk-browser.desktop;",

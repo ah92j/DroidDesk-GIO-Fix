@@ -480,7 +480,7 @@ jobs:
           resume_start = desktop_activity.find('override fun onResume()')
           resume_end = desktop_activity.find('private fun isSessionRunning()', resume_start)
           resume_method = desktop_activity[resume_start:resume_end]
-          if 'releaseX11ConnectionForBackground()' in resume_method:
+          if '\n            releaseX11ConnectionForBackground()\n            connectToX11ServiceIfNeeded()' in resume_method:
               missing.append('do not tear down a healthy X11 connection on every Android resume')
           if 'refreshSurfaceForResume()' not in resume_method:
               missing.append('refresh the native X11 Surface when returning from background')
@@ -648,8 +648,8 @@ jobs:
               missing.append('enable explicit Firefox WebM audio/video MSE preferences')
           if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled", true' not in desktop_experience_script:
               missing.append('keep Firefox RDD enabled and expose the system FFmpeg decoder')
-          if ' --install-recommends ' in desktop_experience_script or '--no-install-recommends install -y firefox-esr' not in desktop_experience_script or 'install -y --reinstall firefox-esr' in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
-              missing.append('install Firefox and matching ARM64 FFmpeg codec ABI without forced reinstall or optional recommendations')
+          if ' --install-recommends ' in desktop_experience_script or '--no-install-recommends --reinstall install -y firefox-esr' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
+              missing.append('refresh Firefox and matching ARM64 FFmpeg codec ABI without optional recommendations')
           if 'kali-wallpapers-all' in desktop_experience_script or 'kali-wallpapers-2026' not in desktop_experience_script:
               missing.append('avoid the multi-gigabyte kali-wallpapers-all metapackage')
           if 'pulse_ready=0' not in desktop_experience_script or 'list short sinks' not in desktop_experience_script:
