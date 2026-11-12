@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.38+57
+name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.38+58
 
 on:
   workflow_dispatch:
@@ -492,8 +492,8 @@ jobs:
           if 'refreshSurfaceForResume()' not in Path('app/android/app/src/main/java/com/termux/x11/LorieView.java').read_text():
               missing.append('provide the native Surface refresh method in LorieView')
 
-          if 'version: 1.4.38+57' not in pubspec:
-              missing.append('expected release version 1.4.38+57')
+          if 'version: 1.4.38+58' not in pubspec:
+              missing.append('expected release version 1.4.38+58')
           if 'String _updateComparisonVersion = ' not in app_state or "info['comparisonVersion']" not in app_state:
               missing.append('compare complete Android versionName plus versionCode')
           if 'does not offer the exact build already installed' not in Path('app/test/services/update_service_test.dart').read_text():
@@ -939,11 +939,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="v1.4.38+57"
+          RELEASE_TAG="v1.4.38+58"
           APK="app/build/droiddesk-release/Kali-Linux-1.4.38-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.38 (in-place rollback rebuild 57)"
-          NOTES="Rollback rebuild from the already published Kali Linux 1.4.38+55 source tree. The application version shown remains 1.4.38; only Android versionCode is raised to 57 so it can update an installed 1.4.39+56 without uninstalling the app. No runtime, Kali rootfs, XFCE, Firefox, or App Store source changes are added beyond the 1.4.38 release commit. Uses the existing permanent APK signing certificate. Install over the existing app to retain its private app data and Kali rootfs. Device verification is still required after installation."
+          TITLE="Kali Linux 1.4.38 (DroidDesk loading title changed to Kali Linux)"
+          NOTES="Rollback rebuild from the published Kali Linux 1.4.38+55 source tree. The only runtime source change is the Launch Desktop loading-screen title from DroidDesk to Kali Linux. Android versionName remains 1.4.38 and versionCode is 58 so this APK can update existing 1.4.39+56 or the previous rollback rebuild without uninstalling the app. No Kali runtime, rootfs, XFCE, Firefox, or App Store changes are included. Uses the existing permanent APK signing certificate. Install over the existing app to retain private app data and Kali rootfs. Device verification is still required after installation."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
             gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
