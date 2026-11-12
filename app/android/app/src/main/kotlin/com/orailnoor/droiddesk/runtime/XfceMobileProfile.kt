@@ -7,7 +7,7 @@ import java.io.File
 /** Installs DroidDesk's touch-friendly Ubuntu-inspired XFCE defaults once per home. */
 object XfceMobileProfile {
     private const val TAG = "XfceMobileProfile"
-    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v24"
+    private const val PROFILE_MARKER = ".droiddesk-xfce-mobile-v25"
     private const val MONOSPACE_FONT = "DejaVu Sans Mono"
     private const val WALLPAPER_ASSET = "droiddesk/sunset-wave-wallpaper.jpg"
 
@@ -149,6 +149,48 @@ object XfceMobileProfile {
         )
         browser.setExecutable(true, false)
 
+        // Handle URL launches directly. The system wrappers in desktop-experience-v20
+        // provide the same behavior globally; these user-level copies cover first boot.
+        val xdgOpen = File(homeDir, ".local/bin/xdg-open")
+        xdgOpen.writeText(
+            """
+            #!/bin/sh
+            case "${'$'}{1:-}" in
+              http://*|https://*) exec /home/kali/.local/bin/droiddesk-browser "${'$'}@" ;;
+            esac
+            exec /usr/bin/xdg-open "${'$'}@"
+            """.trimIndent() + "\n",
+        )
+        xdgOpen.setExecutable(true, false)
+
+        val exoOpen = File(homeDir, ".local/bin/exo-open")
+        exoOpen.writeText(
+            """
+            #!/bin/sh
+            if [ "${'$'}{1:-}" = "--launch" ] && [ "${'$'}{2:-}" = "WebBrowser" ]; then
+              shift 2
+              exec /home/kali/.local/bin/droiddesk-browser "${'$'}@"
+            fi
+            case "${'$'}{1:-}" in
+              http://*|https://*) exec /home/kali/.local/bin/droiddesk-browser "${'$'}@" ;;
+            esac
+            exec /usr/bin/exo-open "${'$'}@"
+            """.trimIndent() + "\n",
+        )
+        exoOpen.setExecutable(true, false)
+
+        val shellConfig = File(homeDir, ".profile")
+        val currentProfile = if (shellConfig.isFile) shellConfig.readText() else ""
+        val additions = buildString {
+            if (!currentProfile.contains("HOME/.local/bin")) append("export PATH=\"${'$'}HOME/.local/bin:${'$'}PATH\"\n")
+            if (!currentProfile.contains("BROWSER=/home/kali/.local/bin/droiddesk-browser")) {
+                append("export BROWSER=/home/kali/.local/bin/droiddesk-browser\n")
+            }
+        }
+        if (additions.isNotEmpty()) {
+            shellConfig.parentFile?.mkdirs()
+            shellConfig.appendText(if (currentProfile.isNotEmpty() && !currentProfile.endsWith("\n")) "\n$additions" else additions)
+        }
         File(appDir, "droiddesk-browser.desktop").writeText(
             """
             [Desktop Entry]

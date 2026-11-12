@@ -863,7 +863,7 @@ class LinuxRuntime(private val context: Context) {
     }
 
     /**
-     * Retry the XFCE Applications menu independently from desktop-experience-v19.
+     * Retry the XFCE Applications menu independently from desktop-experience-v20.
      * Older builds could mark v17 complete while the D-Bus session was not ready.
      */
     private fun ensureKaliApplicationsMenu(rootfs: File): Boolean {
@@ -873,9 +873,17 @@ class LinuxRuntime(private val context: Context) {
             return false
         }
         val script = File(scriptDirectory, "ensure-applications-menu.sh")
+        val applicationMenu = File(scriptDirectory, "applications-menu.py")
         return try {
             context.assets.open("droiddesk/kali/ensure-applications-menu.sh").use { input ->
                 script.outputStream().use { output -> input.copyTo(output) }
+            }
+            context.assets.open("droiddesk/kali/applications-menu.py").use { input ->
+                applicationMenu.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!applicationMenu.setExecutable(true, false)) {
+                Log.w(TAG, "Could not mark the Kali applications launcher executable")
+                return false
             }
             if (!script.setExecutable(true, false)) {
                 Log.w(TAG, "Could not mark the Applications-menu repair script executable")
@@ -895,10 +903,10 @@ class LinuxRuntime(private val context: Context) {
                 onOutput = { line -> Log.i(TAG, "Kali Applications menu: ${line.trimEnd()}") },
             )
             if (result.exitCode == 0) {
-                Log.i(TAG, "Kali XFCE Applications menu was verified")
+                Log.i(TAG, "Custom Kali installed-applications menu and desktop shortcut actions were verified")
                 true
             } else {
-                Log.w(TAG, "Kali XFCE Applications menu repair failed (exit ${result.exitCode}): ${result.output.takeLast(1400)}")
+                Log.w(TAG, "Kali installed-applications menu repair failed (exit ${result.exitCode}): ${result.output.takeLast(1800)}")
                 false
             }
         } catch (error: Exception) {
@@ -912,33 +920,31 @@ class LinuxRuntime(private val context: Context) {
      * additions that cannot be supplied by an APK update alone.
      */
     /**
-     * Install the signed standalone Firefox 155 ARM64 build without rerunning
+     * Install the signed standalone Firefox 160 ARM64 build without rerunning
      * the full APT/XFCE migration if the first network attempt was unavailable.
      */
-    private fun ensureKaliFirefox155(rootfs: File): Boolean {
-        val installDir = File(rootfs, "opt/droiddesk-firefox-155.0.1")
+    private fun ensureKaliFirefox160(rootfs: File): Boolean {
+        val installDir = File(rootfs, "opt/droiddesk-firefox-160.0")
         val installedVersion = File(installDir, ".droiddesk-managed-version")
         val browser = File(installDir, "firefox")
         if (browser.canExecute() && installedVersion.isFile &&
-            runCatching { installedVersion.readText().trim() == "155.0.1" }.getOrDefault(false)
+            runCatching { installedVersion.readText().trim() == "160.0" }.getOrDefault(false)
         ) {
             return true
         }
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
         if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
-            Log.w(TAG, "Could not create Firefox 155 installer directory")
+            Log.w(TAG, "Could not create Firefox 160 installer directory")
             return false
         }
         val script = File(scriptDirectory, "desktop-experience.sh")
         return try {
-            if (!script.isFile) {
-                context.assets.open("droiddesk/kali/desktop-experience.sh").use { input ->
-                    script.outputStream().use { output -> input.copyTo(output) }
-                }
+            context.assets.open("droiddesk/kali/desktop-experience.sh").use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
             }
             if (!script.setExecutable(true, false)) {
-                Log.w(TAG, "Could not mark Firefox 155 installer executable")
+                Log.w(TAG, "Could not mark Firefox 160 installer executable")
                 return false
             }
 
@@ -950,32 +956,35 @@ class LinuxRuntime(private val context: Context) {
                     "HOME=/root", "USER=root", "LOGNAME=root",
                     "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                     "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null",
-                    "/bin/bash", "/root/.droiddesk/desktop-experience.sh", "--install-firefox-155",
+                    "/bin/bash", "/root/.droiddesk/desktop-experience.sh", "--install-firefox-160",
                 ),
                 timeoutMinutes = 20,
-                onOutput = { line -> Log.i(TAG, "Kali Firefox 155 installer: ${line.trimEnd()}") },
+                onOutput = { line -> Log.i(TAG, "Kali Firefox 160 installer: ${line.trimEnd()}") },
             )
             val installed = browser.canExecute() && installedVersion.isFile &&
-                runCatching { installedVersion.readText().trim() == "155.0.1" }.getOrDefault(false)
+                runCatching { installedVersion.readText().trim() == "160.0" }.getOrDefault(false)
             if (result.exitCode == 0 && installed) {
-                Log.i(TAG, "Official Mozilla Firefox 155.0.1 ARM64 installation is ready")
+                Log.i(TAG, "Official Mozilla Firefox 160.0 ARM64 installation is ready")
                 true
             } else {
                 Log.w(
                     TAG,
-                    "Firefox 155.0.1 installation is not ready (exit ${result.exitCode}): ${result.output.takeLast(1600)}",
+                    "Firefox 160.0 installation is not ready (exit ${result.exitCode}): ${result.output.takeLast(1600)}",
                 )
                 false
             }
         } catch (error: Exception) {
-            Log.w(TAG, "Could not run the Firefox 155.0.1 installer", error)
+            Log.w(TAG, "Could not run the Firefox 160.0 installer", error)
             false
         }
     }
 
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
-        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v19")
-        if (completionMarker.isFile) return ensureKaliFirefox155(rootfs)
+        val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v20")
+        if (completionMarker.isFile) {
+            ensureKaliFirefox160(rootfs)
+            return true
+        }
 
         val scriptDirectory = File(rootfs, "root/.droiddesk")
         if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
@@ -1014,7 +1023,9 @@ class LinuxRuntime(private val context: Context) {
                 )
                 false
             } else {
-                File(rootfs, "root/.droiddesk/desktop-experience-v19").isFile && ensureKaliFirefox155(rootfs)
+                val migrated = File(rootfs, "root/.droiddesk/desktop-experience-v20").isFile
+                if (migrated) ensureKaliFirefox160(rootfs)
+                migrated
             }
         } catch (error: Exception) {
             Log.w(TAG, "Could not apply Kali desktop-experience migration", error)
@@ -1040,10 +1051,10 @@ class LinuxRuntime(private val context: Context) {
                     if (!ensureKaliGlycinAndroidCompatibility(rootfs)) {
                         Log.w(TAG, "Kali post-launch Glycin repair did not complete")
                     }
-                    if (!ensureKaliApplicationsMenu(rootfs)) {
-                        Log.w(TAG, "Kali Applications menu repair did not complete; it will retry on the next desktop launch")
-                    }
                     if (ensureKaliDesktopExperience(rootfs)) {
+                        if (!ensureKaliApplicationsMenu(rootfs)) {
+                            Log.w(TAG, "Custom Kali applications menu did not complete; it will retry on the next desktop launch")
+                        }
                         applyKaliDesktopSettingsToRunningSession(rootfs)
                     } else {
                         Log.w(TAG, "Kali post-launch desktop migration did not complete")
@@ -3342,14 +3353,19 @@ POLICY
             # Persist every selected package and expose its GUI launchers on the XFCE desktop.
             store_dir="/home/kali/.local/share/droiddesk"
             tracked_packages="${'$'}store_dir/app-store-packages"
+            disabled_shortcuts="${'$'}store_dir/desktop-shortcuts-disabled"
             desktop_dir="/home/kali/Desktop"
             install -d -m 0755 "${'$'}store_dir" "${'$'}desktop_dir"
-            touch "${'$'}tracked_packages"
+            touch "${'$'}tracked_packages" "${'$'}disabled_shortcuts"
             grep -Fqx "${'$'}package_name" "${'$'}tracked_packages" || echo "${'$'}package_name" >> "${'$'}tracked_packages"
             while IFS= read -r desktop_file; do
               [[ -f "${'$'}desktop_file" ]] || continue
               if grep -Eiq '^(NoDisplay|Hidden)=true' "${'$'}desktop_file"; then continue; fi
               desktop_name="$(basename "${'$'}desktop_file")"
+              if grep -Fqx "${'$'}desktop_name" "${'$'}disabled_shortcuts"; then
+                echo "[DroidDesk App Store] Respecting the user desktop-shortcut preference for ${'$'}desktop_name"
+                continue
+              fi
               managed_shortcut="${'$'}desktop_dir/${'$'}package_name-${'$'}desktop_name"
               temporary_shortcut="${'$'}managed_shortcut.tmp"
               {
@@ -3364,7 +3380,7 @@ POLICY
               dpkg-query -L "${'$'}package_name" 2>/dev/null |
                 grep -E '^/(usr/share|usr/local/share)/applications/[^/]+\.desktop$' || true
             )
-            chown kali:kali "${'$'}tracked_packages" 2>/dev/null || true
+            chown kali:kali "${'$'}tracked_packages" "${'$'}disabled_shortcuts" "${'$'}store_dir" 2>/dev/null || true
             update-desktop-database /usr/share/applications 2>/dev/null || true
             update-mime-database /usr/share/mime 2>/dev/null || true
             session_address_file="/home/kali/.local/share/droiddesk/dbus-session-address"
@@ -3421,7 +3437,7 @@ POLICY
               grep -Fvx '$selected' "${'$'}tracked" > "${'$'}tracked.tmp" || true
               mv -f "${'$'}tracked.tmp" "${'$'}tracked"
             fi
-            for shortcut in /home/kali/Desktop/"$selected"-*.desktop; do
+            for shortcut in /home/kali/Desktop/"$selected"-*.desktop /home/kali/Desktop/store-"$selected"-*.desktop; do
               [ -f "${'$'}shortcut" ] || continue
               if grep -Fq '# DroidDesk App Store package: $selected' "${'$'}shortcut"; then
                 rm -f "${'$'}shortcut"
