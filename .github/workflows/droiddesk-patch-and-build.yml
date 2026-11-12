@@ -852,6 +852,7 @@ jobs:
           echo "Permanent release keystore loaded and alias validated."
 
       - name: Generate Gradle wrapper
+        timeout-minutes: 5
         working-directory: app/android
         env:
           DROIDDESK_KEYSTORE_PASSWORD: ${{ secrets.DROIDDESK_KEYSTORE_PASSWORD }}
