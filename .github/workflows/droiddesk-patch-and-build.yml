@@ -52,6 +52,7 @@ permissions:
 jobs:
   patch-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -867,6 +868,7 @@ jobs:
         run: flutter test test/services/update_service_test.dart
 
       - name: Run rootfs archive path safety tests
+        timeout-minutes: 20
         working-directory: app/android
         shell: bash
         env:
