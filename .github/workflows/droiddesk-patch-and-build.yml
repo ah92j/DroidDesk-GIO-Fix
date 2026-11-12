@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.38+55
+name: Kali Linux Permanent Release Build # exact 1.4.38+55 runtime baseline; update build 59
 
 on:
   workflow_dispatch:
@@ -492,8 +492,8 @@ jobs:
           if 'refreshSurfaceForResume()' not in Path('app/android/app/src/main/java/com/termux/x11/LorieView.java').read_text():
               missing.append('provide the native Surface refresh method in LorieView')
 
-          if 'version: 1.4.38+55' not in pubspec:
-              missing.append('expected release version 1.4.38+55')
+          if 'version: 1.4.38+59' not in pubspec:
+              missing.append('expected release version 1.4.38+59')
           if 'String _updateComparisonVersion = ' not in app_state or "info['comparisonVersion']" not in app_state:
               missing.append('compare complete Android versionName plus versionCode')
           if 'does not offer the exact build already installed' not in Path('app/test/services/update_service_test.dart').read_text():
@@ -939,11 +939,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="v1.4.38+55"
+          RELEASE_TAG="v1.4.38+59"
           APK="app/build/droiddesk-release/Kali-Linux-1.4.38-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.38 (desktop and browser stability candidate)"
-          NOTES="Device-test candidate. Retains the X11 connection and refreshes the Surface on Android resume. Routes terminal HTTP/HTTPS URLs through direct xdg-open/exo-open browser wrappers. Replaces the standard bottom-panel menu button in-place with a searchable GTK3 application grid showing installed apps and icons; right-click or the on-card touch actions button offers Add to Desktop or Remove from Desktop. Shortcut removal persists across package installs and desktop migrations without hiding or uninstalling the app. AppImage, Firefox and Chrome are listed in Applications without automatic desktop icons. Refreshes signature-verified Mozilla Firefox 160.0 ARM64 using the Mozilla primary release key, selects the FFmpeg codec ABI from the actual standalone Firefox backend, and exposes matching runtime libraries to Firefox media processes. Upgrades official Kali Rolling XFCE 4.20 packages. Updates rootfs migration to v20 and mobile profile to v25; preserves Kali data and the permanent Android signing key. YouTube playback and terminal URL handling still require final on-device confirmation."
+          TITLE="Kali Linux 1.4.38 (restored +55 baseline; update build +59)"
+          NOTES="Rollback rebuild from the exact runtime source of Kali Linux 1.4.38+55 (base commit 07acd52874532bfeafa71b68fb53e38d18fa50b2). Restores that release behavior without the later 1.4.39 runtime changes. The only intentional build metadata change is Android versionCode 59 (versionName 1.4.38), allowing installation over previously installed +55, +56, or +58 APKs without uninstalling. Retains the +55 desktop, Firefox, Kali App Store, install/remove and package-management implementation. Keeps existing app data, Kali rootfs and XFCE preferences. Uses the existing permanent Android APK signing key. Build and signing are verified by GitHub Actions; actual phone behavior still requires confirmation after installation."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
             gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
