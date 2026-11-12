@@ -454,7 +454,7 @@ class LinuxRuntime(private val context: Context) {
               PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
               SHELL=/usr/bin/zsh TERM=xterm-256color LANG=C.UTF-8 DISPLAY=:0 GDK_BACKEND=x11 \
               PULSE_SERVER=tcp:127.0.0.1:4713 PULSE_SINK=droiddesk_android PULSE_LATENCY_MSEC=80 \
-              MOZ_DISABLE_CONTENT_SANDBOX=1 XDG_RUNTIME_DIR=/tmp/runtime-kali \
+              XDG_RUNTIME_DIR=/tmp/runtime-kali \
               /usr/bin/sudo -E -u kali /bin/bash --login
             """.trimIndent() + "\n",
         )
@@ -979,10 +979,68 @@ class LinuxRuntime(private val context: Context) {
         }
     }
 
+    /**
+     * Restore Firefox content, RDD, GMP and audio sandbox defaults in an
+     * existing Kali rootfs, without rerunning the APT-heavy desktop migration.
+     * Existing browser profiles and browsing data are preserved.
+     */
+    private fun ensureKaliFirefoxSecuritySandbox(rootfs: File): Boolean {
+        val marker = File(rootfs, "root/.droiddesk/firefox-security-sandbox-v1")
+        if (marker.isFile) return true
+
+        val scriptDirectory = File(rootfs, "root/.droiddesk")
+        if (!scriptDirectory.isDirectory && !scriptDirectory.mkdirs()) {
+            Log.w(TAG, "Could not create the Firefox security migration directory")
+            return false
+        }
+        val script = File(scriptDirectory, "desktop-experience.sh")
+        return try {
+            context.assets.open("droiddesk/kali/desktop-experience.sh").use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!script.setExecutable(true, false)) {
+                Log.w(TAG, "Could not mark the Firefox security migration executable")
+                return false
+            }
+
+            val result = runKaliProotCommand(
+                rootfs = rootfs,
+                workingDirectory = "/root",
+                guestCommand = listOf(
+                    "/usr/bin/env", "-i",
+                    "HOME=/root", "USER=root", "LOGNAME=root",
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "LANG=C.UTF-8", "TERM=dumb", "BASH_ENV=/dev/null",
+                    "/bin/bash", "/root/.droiddesk/desktop-experience.sh",
+                    "--restore-firefox-sandbox",
+                ),
+                timeoutMinutes = 3,
+                onOutput = { line ->
+                    Log.i(TAG, "Kali Firefox security migration: " + line.trimEnd())
+                },
+            )
+            val restored = result.exitCode == 0 && marker.isFile
+            if (restored) {
+                Log.i(TAG, "Firefox content, RDD, GMP and audio sandbox defaults restored")
+            } else {
+                Log.w(
+                    TAG,
+                    "Firefox security migration did not complete (exit " + result.exitCode +
+                        "): " + result.output.takeLast(1200),
+                )
+            }
+            restored
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not restore Firefox sandbox settings", error)
+            false
+        }
+    }
+
     private fun ensureKaliDesktopExperience(rootfs: File): Boolean {
         val completionMarker = File(rootfs, "root/.droiddesk/desktop-experience-v20")
         if (completionMarker.isFile) {
             ensureKaliFirefox160(rootfs)
+            ensureKaliFirefoxSecuritySandbox(rootfs)
             return true
         }
 
@@ -1024,7 +1082,10 @@ class LinuxRuntime(private val context: Context) {
                 false
             } else {
                 val migrated = File(rootfs, "root/.droiddesk/desktop-experience-v20").isFile
-                if (migrated) ensureKaliFirefox160(rootfs)
+                if (migrated) {
+                    ensureKaliFirefox160(rootfs)
+                    ensureKaliFirefoxSecuritySandbox(rootfs)
+                }
                 migrated
             }
         } catch (error: Exception) {
@@ -1199,7 +1260,7 @@ class LinuxRuntime(private val context: Context) {
             "export HOME=/home/kali USER=kali LOGNAME=kali",
             "export DISPLAY=:0 LANG=C.UTF-8 TERM=xterm-256color",
             "export PULSE_SERVER=tcp:127.0.0.1:4713 PULSE_SINK=droiddesk_android PULSE_LATENCY_MSEC=80",
-            "export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_ENABLE_WAYLAND=0",
+            "export MOZ_ENABLE_WAYLAND=0",
             "export XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "export XDG_CONFIG_HOME=/home/kali/.config XDG_CACHE_HOME=/home/kali/.cache",
             "export XDG_DATA_HOME=/home/kali/.local/share XDG_DATA_DIRS=/usr/local/share:/usr/share",
@@ -1236,7 +1297,7 @@ class LinuxRuntime(private val context: Context) {
             "SHELL=/usr/bin/zsh", "TERM=xterm-256color", "LANG=C.UTF-8",
             "DISPLAY=:0", "PULSE_SERVER=tcp:127.0.0.1:4713",
             "PULSE_SINK=droiddesk_android", "PULSE_LATENCY_MSEC=80",
-            "MOZ_DISABLE_CONTENT_SANDBOX=1", "MOZ_ENABLE_WAYLAND=0",
+            "MOZ_ENABLE_WAYLAND=0",
             "XDG_RUNTIME_DIR=/tmp/runtime-kali",
             "XDG_CURRENT_DESKTOP=XFCE", "XDG_SESSION_DESKTOP=xfce", "XDG_SESSION_TYPE=x11",
             "NO_AT_BRIDGE=1", "GTK_A11Y=none", "BASH_ENV=/dev/null",

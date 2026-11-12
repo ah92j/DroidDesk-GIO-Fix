@@ -21,6 +21,54 @@ REQUIRED_PACKAGES=(
   gdebi zenity desktop-file-utils xdg-utils curl gnupg file tar xz-utils python3-gi gir1.2-gtk-3.0
 )
 
+restore_firefox_sandbox() {
+  local wrapper="/home/kali/.local/bin/droiddesk-firefox"
+  if [[ -f "$wrapper" ]]; then
+    sed -i -E '/^[[:space:]]*export[[:space:]]+MOZ_DISABLE_(CONTENT|RDD|GMP)_SANDBOX=1[[:space:]]*$/d' "$wrapper"
+    if ! grep -Fq 'unset MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_RDD_SANDBOX MOZ_DISABLE_GMP_SANDBOX' "$wrapper"; then
+      if grep -q '^export LIBGL_ALWAYS_SOFTWARE=1$' "$wrapper"; then
+        sed -i '/^export LIBGL_ALWAYS_SOFTWARE=1$/a unset MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_RDD_SANDBOX MOZ_DISABLE_GMP_SANDBOX' "$wrapper"
+      else
+        sed -i '2a unset MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_RDD_SANDBOX MOZ_DISABLE_GMP_SANDBOX' "$wrapper"
+      fi
+    fi
+  fi
+
+  for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox /opt/droiddesk-firefox-160.0; do
+    local pref_file="$firefox_root/defaults/pref/droiddesk-media.js"
+    if [[ -f "$pref_file" ]]; then
+      if grep -q 'media.cubeb.sandbox' "$pref_file"; then
+        sed -i -E 's/(pref\("media\.cubeb\.sandbox",[[:space:]]*)false/\1true/' "$pref_file"
+      else
+        printf '%s\n' 'pref("media.cubeb.sandbox", true);' >> "$pref_file"
+      fi
+    fi
+  done
+
+  if [[ -d /home/kali/.mozilla/firefox ]]; then
+    while IFS= read -r -d '' profile_dir; do
+      local user_prefs="$profile_dir/user.js"
+      touch "$user_prefs"
+      if grep -q '^user_pref("media.cubeb.sandbox",' "$user_prefs"; then
+        sed -i -E 's/(user_pref\("media\.cubeb\.sandbox",[[:space:]]*)false/\1true/' "$user_prefs"
+      else
+        printf '%s\n' 'user_pref("media.cubeb.sandbox", true);' >> "$user_prefs"
+      fi
+      chown kali:kali "$user_prefs" 2>/dev/null || true
+    done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
+  fi
+
+  mkdir -p "$FEATURE_DIR"
+  touch "$FEATURE_DIR/firefox-security-sandbox-v1"
+  chmod 0600 "$FEATURE_DIR/firefox-security-sandbox-v1"
+  echo "[Kali Linux] Firefox security sandbox settings restored; profiles and browsing data preserved."
+}
+
+if [[ "$*" == "--restore-firefox-sandbox" ]]; then
+  restore_firefox_sandbox
+  exit 0
+fi
+
 if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$WALLPAPER_DIR" == "/usr/share/xfce4/backdrops/Kali Linux" ]]
   grep -q 'gvfs-daemons' "$0"
@@ -58,7 +106,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   grep -q "media.rdd-ffmpeg.enabled" "$0"
   grep -q 'user_pref("media.rdd-process.enabled", true);' "$0"
   grep -q 'user_pref("media.rdd-ffmpeg.enabled", true);' "$0"
-  grep -q "MOZ_DISABLE_RDD_SANDBOX" "$0"
+  grep -q 'unset MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_RDD_SANDBOX MOZ_DISABLE_GMP_SANDBOX' "$0"
+  grep -q 'pref("media.cubeb.sandbox", true);' "$0"
+  grep -q 'user_pref("media.cubeb.sandbox", true);' "$0"
+  ! grep -Eq 'export[[:space:]]+MOZ_DISABLE_(CONTENT|RDD|GMP)_SANDBOX=1' "$0"
+  grep -q -- '--restore-firefox-sandbox' "$0"
   grep -q "Preserve existing XFCE preferences" "$0"
   grep -q "policy-rc.d" "$0"
   grep -q "Still working:" "$0"
@@ -634,9 +686,7 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 export PULSE_SINK=droiddesk_android
 export PULSE_LATENCY_MSEC=80
 export LIBGL_ALWAYS_SOFTWARE=1
-export MOZ_DISABLE_CONTENT_SANDBOX=1
-export MOZ_DISABLE_RDD_SANDBOX=1
-export MOZ_DISABLE_GMP_SANDBOX=1
+unset MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_RDD_SANDBOX MOZ_DISABLE_GMP_SANDBOX
 export MOZ_ENABLE_WAYLAND=0
 export GDK_BACKEND=x11
 firefox_160_home="/opt/droiddesk-firefox-160.0"
@@ -801,7 +851,7 @@ for firefox_root in /usr/lib/firefox-esr /usr/lib/firefox /opt/droiddesk-firefox
   pref_dir="$firefox_root/defaults/pref"
   if [[ -d "$pref_dir" ]]; then
     cat > "$pref_dir/droiddesk-media.js" <<'FIREFOX_PREFS'
-pref("media.cubeb.sandbox", false);
+pref("media.cubeb.sandbox", true);
 pref("media.cubeb.backend", "pulse");
 pref("layers.acceleration.disabled", true);
 pref("gfx.webrender.software", true);
@@ -842,7 +892,7 @@ if [[ -d /home/kali/.mozilla/firefox ]]; then
       fi
       printf '%s\n' "$pref_line" >> "$user_prefs"
     done <<'FIREFOX_USER_PREFS'
-user_pref("media.cubeb.sandbox", false);
+user_pref("media.cubeb.sandbox", true);
 user_pref("media.cubeb.backend", "pulse");
 user_pref("layers.acceleration.disabled", true);
 user_pref("gfx.webrender.software", true);
@@ -871,6 +921,7 @@ user_pref("media.webm.enabled", true);
 FIREFOX_USER_PREFS
   done < <(find /home/kali/.mozilla/firefox -mindepth 1 -maxdepth 1 -type d -print0)
 fi
+restore_firefox_sandbox
 
 # Keep diagnostics hidden in application data; remove the former Desktop report.
 rm -f /home/kali/Desktop/Firefox-Media-Diagnostic.txt

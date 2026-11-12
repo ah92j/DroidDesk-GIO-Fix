@@ -889,7 +889,7 @@ class DesktopActivity : Activity() {
         }.onFailure { Log.w(TAG, "Loading logo unavailable", it) }
 
         content.addView(TextView(this).apply {
-            text = "DroidDesk"
+            text = "Kali Linux"
             textSize = 28f
             setTextColor(if (light) Color.rgb(28, 28, 30) else Color.WHITE)
             gravity = Gravity.CENTER

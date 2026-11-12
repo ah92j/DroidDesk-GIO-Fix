@@ -1,4 +1,4 @@
-name: DroidDesk Permanent Release Build # signed Kali Linux 1.4.38+55
+name: Kali Linux Permanent Release Build # signed Kali Linux 1.4.39+56
 
 on:
   workflow_dispatch:
@@ -163,6 +163,9 @@ jobs:
               'glycin-proot-compat-v1',
               'xfce-support-v1',
               'desktop-experience-v20',
+              'private fun ensureKaliFirefoxSecuritySandbox(rootfs: File): Boolean',
+              'firefox-security-sandbox-v1',
+              '--restore-firefox-sandbox',
               'private fun ensureKaliApplicationsMenu(rootfs: File): Boolean',
               'droiddesk/kali/ensure-applications-menu.sh',
               'private fun repairKaliDesktopSupport(rootfs: File): Boolean',
@@ -170,7 +173,6 @@ jobs:
               'GLYCIN_DISABLE_SANDBOX=i-know-the-risks',
               'PULSE_SINK=droiddesk_android',
               'PULSE_LATENCY_MSEC=80',
-              'MOZ_DISABLE_CONTENT_SANDBOX=1',
               'ensureKaliDesktopExperience(rootfs)',
               'gdk-pixbuf-csource --raw --name=droiddesk_png_probe',
               'gdk-pixbuf-csource --raw --name=droiddesk_svg_probe',
@@ -309,6 +311,10 @@ jobs:
           ]
 
           missing = [item for item in required_runtime if item not in runtime]
+          if 'MOZ_DISABLE_CONTENT_SANDBOX=1' in runtime:
+              missing.append('do not disable Firefox content sandbox in the Kali PRoot launcher or session')
+          if 'ensureKaliFirefoxSecuritySandbox(rootfs)' not in runtime:
+              missing.append('migrate existing Kali rootfs installs back to Firefox sandbox defaults')
           missing.extend(item for item in required_audio_output if item not in audio_output)
           missing.extend(item for item in required_profile if item not in profile)
           if 'WebBrowser=google-chrome.desktop' in profile:
@@ -492,8 +498,10 @@ jobs:
           if 'refreshSurfaceForResume()' not in Path('app/android/app/src/main/java/com/termux/x11/LorieView.java').read_text():
               missing.append('provide the native Surface refresh method in LorieView')
 
-          if 'version: 1.4.38+55' not in pubspec:
-              missing.append('expected release version 1.4.38+55')
+          if 'version: 1.4.39+56' not in pubspec:
+              missing.append('expected release version 1.4.39+56')
+          if 'text = "Kali Linux"' not in desktop_activity or 'text = "DroidDesk"' in desktop_activity:
+              missing.append('desktop launch screen branding must say Kali Linux')
           if 'String _updateComparisonVersion = ' not in app_state or "info['comparisonVersion']" not in app_state:
               missing.append('compare complete Android versionName plus versionCode')
           if 'does not offer the exact build already installed' not in Path('app/test/services/update_service_test.dart').read_text():
@@ -672,8 +680,10 @@ jobs:
               missing.append('enable explicit Firefox WebM audio/video MSE preferences')
           if 'media.av1.enabled", false' not in desktop_experience_script or 'media.ffvpx.enabled", true' not in desktop_experience_script or 'media.rdd-process.enabled", true' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled", true' not in desktop_experience_script:
               missing.append('keep Firefox RDD enabled and expose the system FFmpeg decoder')
-          if ' --install-recommends ' in desktop_experience_script or '--no-install-recommends --reinstall install -y firefox-esr' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' not in desktop_experience_script:
-              missing.append('refresh Firefox and matching ARM64 FFmpeg codec ABI without optional recommendations')
+          if ' --install-recommends ' in desktop_experience_script or '--no-install-recommends --reinstall install -y firefox-esr' not in desktop_experience_script or 'libavcodec-extra$codec_abi' not in desktop_experience_script or 'media.rdd-ffmpeg.enabled' not in desktop_experience_script or 'MOZ_DISABLE_RDD_SANDBOX=1' in desktop_experience_script or 'MOZ_DISABLE_CONTENT_SANDBOX=1' in desktop_experience_script or 'pref("media.cubeb.sandbox", true);' not in desktop_experience_script:
+              missing.append('refresh Firefox codecs while keeping content/RDD/audio sandbox isolation enabled')
+          if 'user_pref("media.cubeb.sandbox", true);' not in desktop_experience_script or 'unset MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_RDD_SANDBOX MOZ_DISABLE_GMP_SANDBOX' not in desktop_experience_script:
+              missing.append('restore Firefox sandbox defaults in existing profiles and the desktop launcher')
           if 'kali-wallpapers-all' in desktop_experience_script or 'kali-wallpapers-2026' not in desktop_experience_script:
               missing.append('avoid the multi-gigabyte kali-wallpapers-all metapackage')
           if 'pulse_ready=0' not in desktop_experience_script or 'list short sinks' not in desktop_experience_script:
@@ -918,7 +928,7 @@ jobs:
           set -euo pipefail
           RELEASE_DIR="app/build/droiddesk-release"
           mkdir -p "$RELEASE_DIR"
-          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.38-arm64.apk"
+          RELEASE_APK="$RELEASE_DIR/Kali-Linux-1.4.39-arm64.apk"
           cp "app/build/app/outputs/flutter-apk/app-release.apk" "$RELEASE_APK"
           sha256sum "$RELEASE_APK" > "$RELEASE_APK.sha256"
           cat "$RELEASE_APK.sha256"
@@ -926,10 +936,10 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kali-Linux-1.4.38-arm64
+          name: Kali-Linux-1.4.39-arm64
           path: |
-            app/build/droiddesk-release/Kali-Linux-1.4.38-arm64.apk
-            app/build/droiddesk-release/Kali-Linux-1.4.38-arm64.apk.sha256
+            app/build/droiddesk-release/Kali-Linux-1.4.39-arm64.apk
+            app/build/droiddesk-release/Kali-Linux-1.4.39-arm64.apk.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -939,11 +949,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          RELEASE_TAG="v1.4.38+55"
-          APK="app/build/droiddesk-release/Kali-Linux-1.4.38-arm64.apk"
+          RELEASE_TAG="v1.4.39+56"
+          APK="app/build/droiddesk-release/Kali-Linux-1.4.39-arm64.apk"
           CHECKSUM="$APK.sha256"
-          TITLE="Kali Linux 1.4.38 (desktop and browser stability candidate)"
-          NOTES="Device-test candidate. Retains the X11 connection and refreshes the Surface on Android resume. Routes terminal HTTP/HTTPS URLs through direct xdg-open/exo-open browser wrappers. Replaces the standard bottom-panel menu button in-place with a searchable GTK3 application grid showing installed apps and icons; right-click or the on-card touch actions button offers Add to Desktop or Remove from Desktop. Shortcut removal persists across package installs and desktop migrations without hiding or uninstalling the app. AppImage, Firefox and Chrome are listed in Applications without automatic desktop icons. Refreshes signature-verified Mozilla Firefox 160.0 ARM64 using the Mozilla primary release key, selects the FFmpeg codec ABI from the actual standalone Firefox backend, and exposes matching runtime libraries to Firefox media processes. Upgrades official Kali Rolling XFCE 4.20 packages. Updates rootfs migration to v20 and mobile profile to v25; preserves Kali data and the permanent Android signing key. YouTube playback and terminal URL handling still require final on-device confirmation."
+          TITLE="Kali Linux 1.4.39 (Firefox security isolation restored)"
+          NOTES="Device-test candidate. Renames the desktop launch/loading screen branding to Kali Linux. Removes Firefox content/RDD/GMP sandbox-disabling environment variables, restores the Cubeb audio sandbox, and migrates existing Kali rootfs profiles and launch wrappers to Firefox sandbox defaults without deleting profiles or browsing data. Retains the ARM64 Firefox 160.0 installation and matching FFmpeg codec configuration. Existing YouTube video/audio playback remains unverified and is not claimed as fixed; confirm it on the target Android phone. Preserves Kali rootfs data and the permanent APK signing key."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; replacing the APK with this verified build."
             gh release upload "$RELEASE_TAG" "$APK" "$CHECKSUM" --clobber
